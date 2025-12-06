@@ -198,17 +198,32 @@ function uiMakeDeviceInfoTable(props) {
     // Helper function to format detection sensitivity (1-5 scale typically)
     const formatSensitivity = (val) => {
         if (val === undefined || val === null) return '-';
-        return `${val}/5`;
+        return `${escapeHtml(val)}/5`;
     };
 
     // Helper function to add a row only if property exists
     const addRow = (label, value, unit = '') => {
         if (value !== undefined && value !== null) {
-            const displayValue = typeof value === 'boolean' ? formatBool(value) : value;
-            return `<tr><td class="label">${label}:</td><td class="value">${displayValue}${unit}</td></tr>`;
+            let displayValue;
+            if (typeof value === 'boolean') {
+                displayValue = formatBool(value);
+            } else {
+                displayValue = escapeHtml(value);
+            }
+            return `<tr><td class="label">${escapeHtml(label)}:</td><td class="value">${displayValue}${escapeHtml(unit)}</td></tr>`;
         }
         return '';
     };
+
+    // Helper to escape HTML special characters to prevent XSS
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
 
     let html = `<table class="device-info-table"><tbody>`;
 
@@ -430,7 +445,15 @@ function uiUpdateDevicePicture(message) {
             let binary = '';
             for (let i = 0; i < byteArray.length; i++) binary += String.fromCharCode(byteArray[i]);
             const base64 = btoa(binary);
-            const mime = (message.type && message.type.mime) ? message.type.mime : 'image/jpeg';
+
+            // Only allow safe image mime types to avoid XSS
+            let mime = 'image/jpeg';
+            if (message.type && typeof message.type.mime === 'string') {
+                if (['image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/webp'].includes(message.type.mime.trim().toLowerCase())) {
+                    mime = message.type.mime.trim().toLowerCase();
+                }
+            }
+
             const picDiv = document.getElementById('device-picture');
             picDiv.innerHTML = `<img src="data:${mime};base64,${base64}" alt="Device image" class="device-picture-img">`;
         } else {

@@ -673,8 +673,8 @@ process.on('uncaughtException', (err) => {
         return;
     }
 
-    if (err.code === 'write EOF') {
-        log('ℹ️ write EOF uncaught exception. Ignored.', 'debug');
+    if (err.code === 'EOF Error') {
+        log('ℹ️ EOF Error uncaught exception. Ignored.', 'debug');
         return;
     }
 
