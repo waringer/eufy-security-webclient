@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Eufy Security WebSocket Client</title>
+    <link rel="stylesheet" href="index.css">
+    <script src="main.js"></script>
+    <script src="ui.js"></script>
+    <script src="ws-client.js"></script>
+    <script src="video.js"></script>
+</head>
+
+<body>
+    <div class="header-bar">
+        <h1>Eufy Security Web Client</h1>
+        <button id="connect-btn">Connect</button>
+    </div>
+    <div id="device-select-container">
+        <label for="device-select">Select device:</label>
+        <select id="device-select"></select>
+        <button id="device-update-btn" title="Refresh device">&#10227</button>
+        <button id="device-video-btn" class="connect">Start Video</button>
+    </div>
+    <div class="device-info-outer">
+        <div id="device-info-container">
+            <div id="device-info"></div>
+            <div id="device-presets"></div>
+            <div id="device-picture"></div>
+        </div>
+        <!-- <button id="device-test-btn">Test</button> -->
+    </div>
+    <details class="info-details">
+        <summary>Received information</summary>
+        <pre id="info"></pre>
+    </details>
+    <div id="status">
+        <div id="status-content">
+            <div id="status-line1">
+                <span id="connection-status">Not connected</span>
+                <span id="ws-version"></span>
+            </div>
+            <div id="status-line2">
+                <span id="station-sn"></span>
+                <span id="station-version"></span>
+            </div>
+        </div>
+        <button id="status-toggle-btn" title="Collapse/expand bar">&#9654;</button>
+    </div>
+</body>
+
+</html>

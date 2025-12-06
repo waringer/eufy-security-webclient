@@ -1,0 +1,301 @@
+/* ========== Root Variables ========== */
+:root {
+    --info-height-diff: 250px;
+}
+
+/* ========== Layout & Body ========== */
+body {
+    font-family: Arial, sans-serif;
+    margin: 2em;
+    background-color: #1a1a1a;
+    color: #e0e0e0;
+}
+
+/* ========== Header Bar ========== */
+.header-bar {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    margin-bottom: 1.5em;
+}
+
+h1 {
+    margin: 0;
+}
+
+#connect-btn {
+    align-self: center;
+    margin-right: 0;
+    margin-left: auto;
+    font-size: 1em;
+}
+
+/* ========== Status Bar ========== */
+#status {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #2a2a2a;
+    border-top: 1px solid #444;
+    padding: 0.5em 0 0.5em 2em;
+    z-index: 100;
+    font-size: 1em;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    transition: width 0.2s, min-width 0.2s;
+}
+
+#status-content {
+    flex: 1 1 auto;
+    transition: opacity 0.2s;
+}
+
+#status-toggle-btn {
+    background: none;
+    border: none;
+    font-size: 1.5em;
+    cursor: pointer;
+    padding: 0 0.5em;
+    color: #aaa;
+    transition: transform 0.2s;
+    outline: none;
+    flex: 0 0 auto;
+    margin-right: 0;
+}
+
+#status.collapsed #status-content {
+    opacity: 0;
+    pointer-events: none;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+
+#status.collapsed {
+    min-width: 2.5em;
+    width: 2.5em;
+    padding-left: 0.5em;
+    padding-right: 0.5em;
+    left: unset;
+}
+
+#status.collapsed #status-toggle-btn {
+    transform: rotate(180deg);
+}
+
+#status-line1,
+#status-line2 {
+    font-size: 0.95em;
+    color: #aaa;
+    margin-top: 0.2em;
+}
+
+#status span#connection-status {
+    display: inline-block;
+    width: 250px;
+}
+
+#status span#ws-version {
+    color: #999;
+}
+
+#status span#station-sn {
+    color: #4db8ff;
+    display: inline-block;
+    width: 250px;
+}
+
+/* ========== Device Selection & Presets ========== */
+#device-select-container {
+    margin-bottom: 1em;
+    display: none;
+}
+
+#device-presets {
+    flex: unset;
+    gap: 1em;
+    display: none;
+}
+
+.preset-label {
+    text-align: center;
+}
+
+.preset-btn {
+    width: 50px;
+    margin: 0;
+    padding: 8px 0;
+}
+
+.preset-btn.error {
+    color: #f44336;
+}
+
+/* ========== Device Info & Picture ========== */
+.device-info-outer {
+    margin-bottom: 2em;
+}
+
+#device-info-container {
+    display: flex;
+    align-items: flex-start;
+    gap: 1em;
+}
+
+#device-info {
+    color: #e0e0e0;
+    flex: auto;
+    min-width: 300px;
+    max-width: 500px;
+    max-height: calc(100vh - var(--info-height-diff));
+    overflow-y: auto;
+    border: 1px solid #555;
+}
+
+.device-picture-img,
+.device-video-video {
+    max-width: 40vw;
+    max-height: 60vh;
+    display: block;
+}
+
+#device-picture {
+    flex: auto;
+}
+
+#device-update-btn,
+#device-video-btn {
+    display: none;
+}
+
+/* ========== Info Panel ========== */
+.info-details {
+    margin-top: 2em;
+    max-width: 90vw;
+}
+
+pre {
+    background: #2a2a2a;
+    padding: 1em;
+    border-radius: 5px;
+    border: 1px solid #444;
+    color: #e0e0e0;
+}
+
+.info-details summary {
+    font-weight: bold;
+    cursor: pointer;
+    color: #e0e0e0;
+}
+
+.info-details pre {
+    max-height: 300px;
+    overflow: auto;
+    margin-top: 1em;
+}
+
+#device-video-errorMessage {
+    color: #f44336;
+    margin-top: 10px;
+    padding: 10px;
+    background: rgba(244, 67, 54, 0.1);
+    border-radius: 4px;
+    display: none;
+}
+
+#device-video-errorMessage.visible {
+    display: block;
+}
+
+/* ========== Form Elements ========== */
+button {
+    margin-right: 1em;
+    background-color: #3a3a3a;
+    color: #e0e0e0;
+    border: 1px solid #555;
+    padding: 0.5em 1em;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: #4a4a4a;
+}
+
+button:active {
+    background-color: #2a2a2a;
+}
+
+select {
+    background-color: #2a2a2a;
+    color: #e0e0e0;
+    border: 1px solid #555;
+    padding: 0.5em;
+    border-radius: 4px;
+}
+
+select:focus {
+    outline: none;
+    border-color: #4db8ff;
+}
+
+label {
+    color: #e0e0e0;
+}
+
+span.true {
+    color: #4caf50;
+    font-weight: bold;
+}
+
+span.false {
+    color: #f44336;
+    font-weight: bold;
+}
+
+/* ========== Device Info Table ========== */
+.device-info-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.device-info-table tbody tr {
+    border-bottom: 1px solid #444;
+}
+
+.device-info-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.device-info-table tbody tr:hover {
+    background-color: #333;
+}
+
+.device-info-table td {
+    padding: 10px 15px;
+}
+
+.device-info-table td.label {
+    font-weight: 600;
+    color: #aaa;
+    width: 40%;
+    background-color: #252525;
+}
+
+.device-info-table td.value {
+    color: #e0e0e0;
+    width: 60%;
+}

@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  transcoding-proxy:
+    build: .
+    container_name: eufy-security-webclient
+    restart: always
+    ports:
+      - "3001:3001"
+    environment:
+      # REQUIRED: URL of your eufy-security-ws server
+      EUFY_WS_URL: 'ws://<your eufy-security-ws>:3000'
+
+      # OPTIONAL: ffmpeg transcoding settings
+      TRANSCODING_CRF: 23                # Constant Rate Factor (quality)
+      VIDEO_SCALE: '1280:-2'              # Video scaling (width:height)
+      FFMPEG_THREADS: 4                  # Number of ffmpeg threads
+      LOGGINGLEVEL: 2                    # Logging verbosity (0-3)
+      FFMPEG_MINLOGLEVEL: warning        # ffmpeg log level
+      FFMPEG_SHORT_KEYFRAMES: 'true'     # Use short keyframes (true/false)
+      TRANSCODING_PRESET: ultrafast      # ffmpeg preset
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

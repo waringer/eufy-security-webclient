@@ -1,0 +1,39 @@
+{
+  "name": "eufy-security-webclient",
+  "version": "0.1.0",
+  "description": "Proxy server and web client for https://github.com/bropat/eufy-security-ws: live video streaming, device control, and H.265 to H.264/AAC transcoding via ffmpeg.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "eufy",
+    "eufycam",
+    "h265",
+    "transcoding",
+    "ffmpeg",
+    "cam",
+    "cameras",
+    "security",
+    "eufy-security",
+    "ws",
+    "websocket"
+  ],
+  "author": "Holger Wolff",
+  "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/waringer/eufy-security-webclient"
+  },
+  "bugs": {
+    "url": "https://github.com/waringer/eufy-security-webclient/issues"
+  },
+  "homepage": "https://github.com/waringer/eufy-security-webclient#readme",
+  "dependencies": {
+    "ws": "^8.16.0",
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
