@@ -47,9 +47,8 @@ function videoHideError() {
  * @param {boolean} streaming - True if streaming is active.
  */
 function videoUpdateButtons(streaming) {
-    const videoBtn = document.getElementById('device-video-btn');
-    videoBtn.textContent = streaming ? 'Stop Video' : 'Start Video';
-    videoBtn.className = streaming ? 'disconnect' : 'connect';
+    uiUpdateVideoButton(streaming);
+    uiLockDeviceList(streaming);
 }
 
 /**

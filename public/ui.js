@@ -452,6 +452,17 @@ function uiMakeDeviceList(devices) {
     }
 }
 
+function uiLockDeviceList(lock) {
+    const select = document.getElementById('device-select');
+    select.disabled = lock;
+}
+
+function uiUpdateVideoButton(playing) {
+    const videoBtn = document.getElementById('device-video-btn');
+    videoBtn.textContent = playing ? 'Stop Video' : 'Start Video';
+    videoBtn.className = playing ? 'disconnect' : 'connect';
+}
+
 // Updates the device WiFi RSSI value in the UI.
 function uiUpdateDeviceWifiRssi(deviceSn, rssi) {
     const rssiEl = document.getElementById('wifiRssi');
