@@ -252,10 +252,19 @@ function eufyParseEventMessage(message) {
                     break;
             }
             break;
-        case 'livestream video data': {
+        case 'livestream video data':
+        case 'livestream audio data':
             // ignore - handled in video.js and transcoding ws
             break;
-        }
+        case 'motion detected':
+        case 'person detected':
+        case 'stranger detected':
+        case 'sound detected':
+        case 'pet detected':
+        case 'verhicle detected':
+            if (message.event.state === true)
+                uiSendNotification(`Eufy Event: ${message.event.event}`, `Device SN: ${message.event.serialNumber}`);
+            break;
         case 'command result':
             break;
         default:

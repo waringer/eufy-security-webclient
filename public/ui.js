@@ -9,10 +9,15 @@ function uiInit() {
     // Hide info panel if debugMode is false
     uiInitInfoPanel(debugMode);
     uiInitKeyboardShortcuts();
+    uiCheckNotificationsSupport();
 
     document.getElementById('connect-btn').onclick = function () {
         wsToggleConnection();
     };
+
+    document.getElementById('notification-btn').onclick = function () {
+        uiInitNotifiactions();
+    }
 
     // Status bar collapse/expand toggle
     document.getElementById('status-toggle-btn').addEventListener('click', function () {
@@ -118,6 +123,42 @@ function uiInitKeyboardShortcuts() {
     });
 }
 
+function uiCheckNotificationsSupport() {
+    const notificationBtn = document.getElementById('notification-btn');
+    if (!("Notification" in window)) {
+        // Browser does not support notifications
+        notificationBtn.style.display = 'none';
+    }
+
+    switch (Notification.permission) {
+        case "granted":
+            notificationBtn.style.display = 'none';
+            break;
+        case "denied":
+            notificationBtn.style.display = 'none';
+            break;
+        case "default":
+            notificationBtn.style.display = 'block';
+            break;
+    }
+}
+
+// Initializes browser notifications by requesting permission from the user.
+function uiInitNotifiactions() {
+    // Check if browser supports notifications
+    if ("Notification" in window) {
+        // Request permission from user
+        Notification.requestPermission().then(permission => {
+            if (permission === "granted") {
+                debugConsoleLog("Notifications permission granted");
+            } else if (permission === "denied") {
+                debugConsoleLog("Notifications permission denied");
+            }
+
+            uiCheckNotificationsSupport();
+        });
+    }
+}
 
 // Resets all UI display fields to their default/empty state.
 function uiReset() {
@@ -132,6 +173,17 @@ function uiReset() {
     uiUpdateConnectButtonState();
     uiShowPositionPresetControls(false);
     uiChangePositionPresetError(null);
+}
+
+function uiSendNotification(title, body) {
+    if (Notification.permission === "granted") {
+        new Notification(title, {
+            body: body,
+            requireInteraction: false,
+            icon: 'favicon.ico'
+        });
+        debugConsoleLog("Notification sent:", title, body);
+    }
 }
 
 // Updates the Eufy WebSocket version info in the UI.
