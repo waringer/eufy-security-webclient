@@ -171,15 +171,15 @@ function uiReset() {
     document.getElementById('ws-version').textContent = '';
     document.getElementById('station-sn').textContent = '';
     document.getElementById('station-version').textContent = '';
-    document.getElementById('device-info').innerHTML = '';
-    document.getElementById('device-picture').innerHTML = '';
+    document.getElementById('device-info').replaceChildren();
+    document.getElementById('device-picture').replaceChildren();
     document.getElementById('device-select-container').style.display = "none"
     document.getElementById('device-update-btn').style.display = "none"
     document.getElementById('device-video-btn').style.display = "none"
     uiUpdateConnectButtonState();
     uiShowPositionPresetControls(false);
     uiChangePositionPresetError(null);
-    uiShowConfigButton(false);
+    uiShowConfigButton(!!transcodeConfig);
 }
 
 function uiSendNotification(title, body) {
@@ -251,6 +251,17 @@ function uiUpdateDeviceInfoTable(props) {
 
 // Creates the HTML for the device info table.
 function uiMakeDeviceInfoTable(props) {
+    // Helper to escape HTML special characters to prevent XSS
+    function escapeHtml(str) {
+        if (str === undefined || str === null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     // Helper function to format boolean values as icons
     const formatBool = (val) => {
         if (val === true) return '<span class="true">✓</span>';
@@ -278,16 +289,6 @@ function uiMakeDeviceInfoTable(props) {
         return '';
     };
 
-    // Helper to escape HTML special characters to prevent XSS
-    function escapeHtml(str) {
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
     let html = `<table class="device-info-table"><tbody>`;
 
     // Basic device info (always shown)
@@ -300,10 +301,10 @@ function uiMakeDeviceInfoTable(props) {
 
     // WiFi info (if available)
     if (props.wifiRssi !== undefined) {
-        html += `<tr><td class="label">WiFi RSSI:</td><td class="value"><span id='wifiRssi'>${props.wifiRssi}</span> dBm</td></tr>`;
+        html += `<tr><td class="label">WiFi RSSI:</td><td class="value"><span id='wifiRssi'>${escapeHtml(props.wifiRssi)}</span> dBm</td></tr>`;
     }
     if (props.wifiSignalLevel !== undefined) {
-        html += `<tr><td class="label">WiFi Signal Level:</td><td class="value"><span id='wifiSignalLevel'>${props.wifiSignalLevel}</span></td></tr>`;
+        html += `<tr><td class="label">WiFi Signal Level:</td><td class="value"><span id='wifiSignalLevel'>${escapeHtml(props.wifiSignalLevel)}</span></td></tr>`;
     }
 
     // Device state
@@ -445,7 +446,7 @@ function uiMakeDeviceInfoTable(props) {
 function uiMakeDeviceList(devices) {
     const selectContainer = document.getElementById('device-select-container');
     const select = document.getElementById('device-select');
-    select.innerHTML = '';
+    select.replaceChildren();
     devices.forEach(dev => {
         const opt = document.createElement('option');
         opt.value = dev;
@@ -495,7 +496,6 @@ function uiShowPicture(picture) {
     // Show image if available and not streaming
     const videoBtn = document.getElementById('device-video-btn');
     if (videoBtn.className === 'connect') {
-        document.getElementById('device-picture').innerHTML = '';
         if (picture) {
             uiUpdateDevicePicture(picture);
         } else {
@@ -514,12 +514,6 @@ function uiUpdateDevicePicture(message) {
     if (message && message.data.data && Array.isArray(message.data.data)) {
         const videoBtn = document.getElementById('device-video-btn');
         if (videoBtn.className === 'connect') {
-            // Convert ArrayBuffer to Base64
-            const byteArray = message.data.data;
-            let binary = '';
-            for (let i = 0; i < byteArray.length; i++) binary += String.fromCharCode(byteArray[i]);
-            const base64 = btoa(binary);
-
             // Only allow safe image mime types to avoid XSS
             let mime = 'image/jpeg';
             if (message.type && typeof message.type.mime === 'string') {
@@ -529,7 +523,18 @@ function uiUpdateDevicePicture(message) {
             }
 
             const picDiv = document.getElementById('device-picture');
-            picDiv.innerHTML = `<img src="data:${mime};base64,${base64}" alt="Device image" class="device-picture-img">`;
+
+            // Revoke old blob URL if exists to prevent memory leak
+            const oldImg = picDiv.querySelector('img');
+            if (oldImg && oldImg.src.startsWith('blob:')) {
+                URL.revokeObjectURL(oldImg.src);
+            }
+
+            const img = document.createElement('img');
+            img.src = URL.createObjectURL(new Blob([new Uint8Array(message.data.data)], { type: mime }));
+            img.alt = 'Device image';
+            img.className = 'device-picture-img';
+            picDiv.replaceChildren(img);
         } else {
             // Skip picture update while video is streaming
             debugConsoleLog('Skipping picture update while video is streaming.');
@@ -540,8 +545,25 @@ function uiUpdateDevicePicture(message) {
 // Updates the device video element in the UI.
 function uiUpdateDeviceVideo() {
     const picDiv = document.getElementById('device-picture');
-    picDiv.innerHTML = `<video id="device-video-video" controls autoplay></video><p><strong>Buffer:</strong><span id="device-video-buffer">0s</span></p><div id="device-video-errorMessage"></div>
-`;
+
+    const video = document.createElement('video');
+    video.id = 'device-video-video';
+    video.controls = true;
+    video.autoplay = true;
+
+    const p = document.createElement('p');
+    const strong = document.createElement('strong');
+    strong.textContent = 'Buffer:';
+    const bufferSpan = document.createElement('span');
+    bufferSpan.id = 'device-video-buffer';
+    bufferSpan.textContent = '0s';
+    p.appendChild(strong);
+    p.appendChild(bufferSpan);
+
+    const errorDiv = document.createElement('div');
+    errorDiv.id = 'device-video-errorMessage';
+
+    picDiv.replaceChildren(video, p, errorDiv);
 }
 
 // Shows or hides the video button.
@@ -554,11 +576,10 @@ function uiShowPositionPresetControls(show) {
     const presetsContainer = document.getElementById('device-presets');
     presetsContainer.style.display = show ? 'grid' : 'none';
     if (show) {
-        presetsContainer.innerHTML = '';
         const span = document.createElement('span');
         span.className = 'preset-label';
         span.textContent = 'Pos:';
-        presetsContainer.appendChild(span);
+        presetsContainer.replaceChildren(span);
 
         for (let i = 0; i < presetButtons; i++) {
             const btn = document.createElement('button');
