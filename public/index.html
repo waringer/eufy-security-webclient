@@ -14,6 +14,7 @@
 <body>
     <div class="header-bar">
         <h1>Eufy Security Web Client</h1>
+        <button id="config-btn" title="Configuration">⚙</button>
         <button id="notification-btn">Activate Notifications</button>
         <button id="connect-btn">Connect</button>
     </div>
@@ -35,6 +36,56 @@
         <summary>Received information</summary>
         <pre id="info"></pre>
     </details>
+    <div id="config-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Configuration</h2>
+                <span class="modal-close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="config-field">
+                    <label for="config-eufy-ws-url">Eufy WS URL:</label>
+                    <input type="text" id="config-eufy-ws-url" placeholder="ws://localhost:3000">
+                </div>
+                <div class="config-field">
+                    <label for="config-video-scale">Video Scale:</label>
+                    <input type="text" id="config-video-scale" placeholder="1280:-2">
+                </div>
+                <div class="config-field">
+                    <label for="config-transcoding-preset">Transcoding Preset:</label>
+                    <select id="config-transcoding-preset">
+                        <option value="ultrafast">ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="faster">faster</option>
+                        <option value="fast">fast</option>
+                        <option value="medium">medium</option>
+                        <option value="slow">slow</option>
+                        <option value="slower">slower</option>
+                        <option value="veryslow">veryslow</option>
+                    </select>
+                </div>
+                <div class="config-field">
+                    <label for="config-transcoding-crf">Transcoding CRF:</label>
+                    <input type="number" id="config-transcoding-crf" min="0" max="51" placeholder="23">
+                </div>
+                <div class="config-field">
+                    <label for="config-ffmpeg-threads">FFmpeg Threads:</label>
+                    <input type="number" id="config-ffmpeg-threads" min="1" max="32" placeholder="4">
+                </div>
+                <div class="config-field">
+                    <label for="config-short-keyframes">
+                        <input type="checkbox" id="config-short-keyframes">
+                        Short Keyframes
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="config-save-btn">Save</button>
+                <button id="config-cancel-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
     <div id="status">
         <div id="status-content">
             <div id="status-line1">

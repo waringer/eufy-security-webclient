@@ -1,4 +1,5 @@
 let presetButtons = null;
+let inConfig = false;
 
 function uiDebugLog(message) {
     if (debugMode) document.getElementById('info').textContent += message + '\n';
@@ -14,6 +15,10 @@ function uiInit() {
     document.getElementById('connect-btn').onclick = function () {
         wsToggleConnection();
     };
+
+    document.getElementById('config-btn').onclick = function () {
+        uiOpenConfigModal();
+    }
 
     document.getElementById('notification-btn').onclick = function () {
         uiInitNotifiactions();
@@ -74,6 +79,7 @@ function uiInitInfoPanel(isEnabled) {
 
 function uiInitKeyboardShortcuts() {
     document.addEventListener('keydown', function (event) {
+        if (inConfig) return;
         switch (event.code) {
             case 'ArrowUp':
                 eufyPanAndTilt(uiGetDeviceSn(), 3);
@@ -173,6 +179,7 @@ function uiReset() {
     uiUpdateConnectButtonState();
     uiShowPositionPresetControls(false);
     uiChangePositionPresetError(null);
+    uiShowConfigButton(false);
 }
 
 function uiSendNotification(title, body) {
@@ -220,6 +227,10 @@ function uiUpdateConnectButtonState() {
     connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
     connectBtn.className = connected ? 'disconnect' : 'connect';
 };
+
+function uiShowConfigButton(show) {
+    document.getElementById('config-btn').style.display = show ? 'block' : 'none';
+}
 
 /**
  * Updates the connection status text and color in the UI.
@@ -587,4 +598,65 @@ function uiShowPanTiltControls(show) {
 function uiGetDeviceSn() {
     const select = document.getElementById('device-select');
     return select ? select.value : null;
+}
+
+// Opens the configuration modal and populates it with current config values
+function uiOpenConfigModal() {
+    if (!transcodeConfig) {
+        uiShowConfigButton(false);
+        alert('Configuration not available');
+        return;
+    }
+
+    // Populate modal fields with current config
+    document.getElementById('config-eufy-ws-url').value = transcodeConfig.EUFY_WS_URL || '';
+    document.getElementById('config-video-scale').value = transcodeConfig.VIDEO_SCALE || '';
+    document.getElementById('config-transcoding-preset').value = transcodeConfig.TRANSCODING_PRESET || 'ultrafast';
+    document.getElementById('config-transcoding-crf').value = transcodeConfig.TRANSCODING_CRF || '';
+    document.getElementById('config-ffmpeg-threads').value = transcodeConfig.FFMPEG_THREADS || '';
+    document.getElementById('config-short-keyframes').checked = transcodeConfig.FFMPEG_SHORT_KEYFRAMES || false;
+
+    // Show modal
+    const modal = document.getElementById('config-modal');
+    modal.classList.add('show');
+    inConfig = true;
+
+    // Setup event listeners
+    const closeBtn = modal.querySelector('.modal-close');
+    const cancelBtn = document.getElementById('config-cancel-btn');
+    const saveBtn = document.getElementById('config-save-btn');
+
+    const closeModal = () => {
+        modal.classList.remove('show');
+        inConfig = false;
+    };
+
+    closeBtn.onclick = closeModal;
+    cancelBtn.onclick = closeModal;
+
+    // Close modal when clicking outside
+    modal.onclick = (e) => {
+        if (e.target === modal) {
+            closeModal();
+        }
+    };
+
+    // Save configuration
+    saveBtn.onclick = () => {
+        const newConfig = {
+            EUFY_WS_URL: document.getElementById('config-eufy-ws-url').value,
+            VIDEO_SCALE: document.getElementById('config-video-scale').value,
+            TRANSCODING_PRESET: document.getElementById('config-transcoding-preset').value,
+            TRANSCODING_CRF: document.getElementById('config-transcoding-crf').value,
+            FFMPEG_THREADS: document.getElementById('config-ffmpeg-threads').value,
+            FFMPEG_SHORT_KEYFRAMES: document.getElementById('config-short-keyframes').checked
+        };
+
+        const err = restPostConfig(newConfig);
+        if (err) {
+            alert('Error saving configuration: ' + err);
+        } else {
+            closeModal();
+        }
+    };
 }
