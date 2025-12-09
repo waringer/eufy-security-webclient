@@ -4,6 +4,8 @@ let eufywsUrl;
 let eufyws;
 let stationSn = null;
 let lastPreset = null;
+let pathToDeviceSnMap = [];
+let pendingImageRequest = null;
 
 // General WebSocket functions
 
@@ -219,20 +221,35 @@ function eufyParseResultMessage(message) {
 function eufyParseEventMessage(message) {
     switch (message.event.event) {
         case 'database query latest': {
-            const selectedDeviceSn = uiGetDeviceSn();
-            if (selectedDeviceSn && Array.isArray(message.event.data)) {
-                const found = message.event.data.find(d => d.device_sn === selectedDeviceSn);
-                if (found && found.crop_local_path) {
-                    if (stationSn)
-                        eufyStationDownloadImage(stationSn, found.crop_local_path);
-                } else {
-                    debugConsoleLog('No crop_local_path found for the selected device.');
+            // cache result for path to device SN mapping
+            if (Array.isArray(message.event.data)) {
+                pathToDeviceSnMap = message.event.data.map(d => ({
+                    deviceSn: d.device_sn,
+                    cropLocalPath: d.crop_local_path
+                }));
+            }
+
+            if (pendingImageRequest) {
+                console.log('Processing pending image request after database query.');
+                eufyHandleImageDonloadedEvent(pendingImageRequest, true);
+                pendingImageRequest = null;
+            } else {
+                console.log('No pending image request to process after database query.');
+                const selectedDeviceSn = uiGetDeviceSn();
+                if (selectedDeviceSn && Array.isArray(message.event.data)) {
+                    const found = message.event.data.find(d => d.device_sn === selectedDeviceSn);
+                    if (found && found.crop_local_path) {
+                        if (stationSn)
+                            eufyStationDownloadImage(stationSn, found.crop_local_path);
+                    } else {
+                        debugConsoleLog('No crop_local_path found for the selected device.');
+                    }
                 }
             }
             break;
         }
         case 'image downloaded':
-            uiUpdateDevicePicture(message.event.image);
+            eufyHandleImageDonloadedEvent(message.event);
             break;
         case 'property changed':
             switch (message.event.source) {
@@ -270,6 +287,29 @@ function eufyParseEventMessage(message) {
         default:
             debugConsoleLog('Unknown event type:', message.event.event);
             break;
+    }
+}
+
+function eufyHandleImageDonloadedEvent(event, isPendingRequest = false) {
+    // check cached path to device SN mapping, if not found, query database again - but avoid loop!
+    const mapping = pathToDeviceSnMap.find(m => m.cropLocalPath === event.file);
+    if (mapping) {
+        pendingImageRequest = null;
+        if (mapping.deviceSn === uiGetDeviceSn()) {
+            uiUpdateDevicePicture(event.image);
+        } else {
+            debugConsoleLog('Downloaded image does not match the selected device.');
+        }
+    }
+    else {
+        if (isPendingRequest) {
+            debugConsoleLog('Downloaded image does not match the selected device, even after querying latest info.');
+            pendingImageRequest = null;
+        } else {
+            debugConsoleLog('Downloaded image does not match the selected device, querying latest info.');
+            pendingImageRequest = event;
+            eufyStationDatabaseQueryLatestInfo(stationSn);
+        }
     }
 }
 
