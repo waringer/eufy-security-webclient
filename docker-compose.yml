@@ -8,9 +8,6 @@ services:
     ports:
       - "3001:3001"
     environment:
-      # REQUIRED: URL of your eufy-security-ws server
-      EUFY_WS_URL: 'ws://<your eufy-security-ws>:3000'
-
       # OPTIONAL: ffmpeg transcoding settings
       TRANSCODING_CRF: 23                # Constant Rate Factor (quality)
       VIDEO_SCALE: '1280:-2'              # Video scaling (width:height)

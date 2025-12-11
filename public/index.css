@@ -385,6 +385,7 @@ span.false {
 }
 
 .config-field input[type="text"],
+.config-field input[type="password"],
 .config-field input[type="number"],
 .config-field select {
     width: 100%;
@@ -397,6 +398,7 @@ span.false {
 }
 
 .config-field input[type="text"]:focus,
+.config-field input[type="password"]:focus,
 .config-field input[type="number"]:focus,
 .config-field select:focus {
     outline: none;
@@ -406,6 +408,48 @@ span.false {
 .config-field input[type="checkbox"] {
     margin-right: 0.5em;
     cursor: pointer;
+}
+
+.password-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.password-input-wrapper input[type="password"],
+.password-input-wrapper input[type="text"] {
+    flex: 1;
+    width: 100%;
+    padding: 0.6em;
+    padding-right: 2.5em;
+    background-color: #1a1a1a;
+    color: #e0e0e0;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 1em;
+}
+
+.password-input-wrapper input[type="password"]:focus,
+.password-input-wrapper input[type="text"]:focus {
+    outline: none;
+    border-color: #4db8ff;
+}
+
+.password-toggle {
+    position: absolute;
+    right: 0.5em;
+    background: none;
+    border: none;
+    font-size: 1.2em;
+    cursor: pointer;
+    padding: 0.3em;
+    color: #aaa;
+    transition: color 0.2s;
+}
+
+.password-toggle:hover {
+    color: #4db8ff;
 }
 
 .modal-footer {

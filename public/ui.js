@@ -194,8 +194,8 @@ function uiSendNotification(title, body) {
 }
 
 // Updates the Eufy WebSocket version info in the UI.
-function uiUpdateEufyWSVersion(driverVersion, serverVersion, minSchemaVersion, maxSchemaVersion) {
-    document.getElementById('ws-version').textContent = `Driver: ${driverVersion}, Server: ${serverVersion}, Schema: ${minSchemaVersion}-${maxSchemaVersion}`;
+function uiUpdateEufyWSVersion(clientVersion, serverVersion) {
+    document.getElementById('ws-version').textContent = `Eufy-Client: ${clientVersion}, Server: ${serverVersion}`;
 };
 
 // Updates the station serial number in the UI.
@@ -630,7 +630,10 @@ function uiOpenConfigModal() {
     }
 
     // Populate modal fields with current config
-    document.getElementById('config-eufy-ws-url').value = transcodeConfig.EUFY_WS_URL || '';
+    document.getElementById('config-eufy-username').value = transcodeConfig.EUFY_CONFIG?.username || '';
+    document.getElementById('config-eufy-password').value = transcodeConfig.EUFY_CONFIG?.password || '';
+    document.getElementById('config-eufy-country').value = transcodeConfig.EUFY_CONFIG?.country || 'DE';
+    document.getElementById('config-eufy-language').value = transcodeConfig.EUFY_CONFIG?.language || 'en';
     document.getElementById('config-video-scale').value = transcodeConfig.VIDEO_SCALE || '';
     document.getElementById('config-transcoding-preset').value = transcodeConfig.TRANSCODING_PRESET || 'ultrafast';
     document.getElementById('config-transcoding-crf').value = transcodeConfig.TRANSCODING_CRF || '';
@@ -642,6 +645,20 @@ function uiOpenConfigModal() {
     modal.classList.add('show');
     inConfig = true;
 
+    // Setup password toggle
+    const passwordToggleBtn = document.getElementById('password-toggle-btn');
+    const passwordInput = document.getElementById('config-eufy-password');
+
+    passwordToggleBtn.onclick = () => {
+        if (passwordInput.type === 'password') {
+            passwordInput.type = 'text';
+            passwordToggleBtn.textContent = '🙈';
+        } else {
+            passwordInput.type = 'password';
+            passwordToggleBtn.textContent = '👁';
+        }
+    };
+
     // Setup event listeners
     const closeBtn = modal.querySelector('.modal-close');
     const cancelBtn = document.getElementById('config-cancel-btn');
@@ -650,6 +667,9 @@ function uiOpenConfigModal() {
     const closeModal = () => {
         modal.classList.remove('show');
         inConfig = false;
+        // Reset password field type
+        passwordInput.type = 'password';
+        passwordToggleBtn.textContent = '👁';
     };
 
     closeBtn.onclick = closeModal;
@@ -665,7 +685,13 @@ function uiOpenConfigModal() {
     // Save configuration
     saveBtn.onclick = () => {
         const newConfig = {
-            EUFY_WS_URL: document.getElementById('config-eufy-ws-url').value,
+            EUFY_CONFIG: {
+                username: document.getElementById('config-eufy-username').value,
+                password: document.getElementById('config-eufy-password').value,
+                persistentDir: './data',
+                country: document.getElementById('config-eufy-country').value,
+                language: document.getElementById('config-eufy-language').value
+            },
             VIDEO_SCALE: document.getElementById('config-video-scale').value,
             TRANSCODING_PRESET: document.getElementById('config-transcoding-preset').value,
             TRANSCODING_CRF: document.getElementById('config-transcoding-crf').value,

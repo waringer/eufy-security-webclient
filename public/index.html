@@ -43,10 +43,29 @@
                 <span class="modal-close">&times;</span>
             </div>
             <div class="modal-body">
+                <h3>Eufy Account</h3>
                 <div class="config-field">
-                    <label for="config-eufy-ws-url">Eufy WS URL:</label>
-                    <input type="text" id="config-eufy-ws-url" placeholder="ws://localhost:3000">
+                    <label for="config-eufy-username">Username:</label>
+                    <input type="text" id="config-eufy-username" placeholder="email@example.com">
                 </div>
+                <div class="config-field">
+                    <label for="config-eufy-password">Password:</label>
+                    <div class="password-input-wrapper">
+                        <input type="password" id="config-eufy-password" placeholder="password">
+                        <button type="button" class="password-toggle" id="password-toggle-btn"
+                            title="Show/Hide password">👁</button>
+                    </div>
+                </div>
+                <div class="config-field">
+                    <label for="config-eufy-country">Country:</label>
+                    <input type="text" id="config-eufy-country" placeholder="DE" maxlength="2">
+                </div>
+                <div class="config-field">
+                    <label for="config-eufy-language">Language:</label>
+                    <input type="text" id="config-eufy-language" placeholder="en" maxlength="2">
+                </div>
+
+                <h3>Transcoding Settings</h3>
                 <div class="config-field">
                     <label for="config-video-scale">Video Scale:</label>
                     <input type="text" id="config-video-scale" placeholder="1280:-2">

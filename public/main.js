@@ -55,8 +55,8 @@ document.addEventListener('DOMContentLoaded', function () {
     fetch('/health')
         .then(response => response.json())
         .then(data => {
-            console.log('eufywsUrl from /health:', data.eufywsUrl);
-            eufywsUrl = data.eufywsUrl;
+            console.log('eufywsUrl from /health:', data.eufyConnected);
+            eufywsUrl = document.location.origin.replace(/^http/, 'ws') + '/api';
             transcodeServerUrl = document.location.origin;
             presetButtons = 6;
             uiInit();
@@ -66,7 +66,7 @@ document.addEventListener('DOMContentLoaded', function () {
         .catch(err => {
             console.log('Error fetching /health:', err);
             console.log('Falling back to default URLs.');
-            eufywsUrl = 'ws://localhost:3000';
+            eufywsUrl = 'ws://localhost:3001/api';
             transcodeServerUrl = 'http://localhost:3001';
             presetButtons = 6;
             uiInit();

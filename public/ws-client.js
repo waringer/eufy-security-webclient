@@ -39,8 +39,6 @@ function wsDisconnect() {
         eufyws.close();
         videoStopStream();
     }
-    eufyws = null;
-    stationSn = null;
 }
 
 /**
@@ -66,6 +64,8 @@ function wsConnected() {
  */
 function wsDisconnected() {
     uiUpdateStatus('Not connected', 'red');
+    eufyws = null;
+    stationSn = null;
     uiReset();
 }
 
@@ -118,11 +118,8 @@ function wsMessage(event) {
  * @param {Object} data - The version message data.
  */
 function eufyParseVersionMessage(data) {
-    uiUpdateEufyWSVersion(data.driverVersion, data.serverVersion, data.minSchemaVersion, data.maxSchemaVersion);
-
-    // After receiving: set API schema version according to API spec
-    if (typeof data.maxSchemaVersion === 'number')
-        eufySetApiSchema(data.maxSchemaVersion);
+    uiUpdateEufyWSVersion(data.clientVersion, data.serverVersion, 0, 0);
+    eufyStartListening();
 }
 
 /**
@@ -131,14 +128,6 @@ function eufyParseVersionMessage(data) {
  */
 function eufyParseResultMessage(message) {
     switch (message.messageId) {
-        case 'set_api_schema':
-            if (message.success) {
-                debugConsoleLog('API schema version set successfully.');
-                eufyStartListening();
-            } else {
-                debugConsoleLog('Error setting API schema version:', message.error);
-            }
-            break;
         case 'start_listening':
             // Show info for start_listening
             if (message.success && message.result && message.result.state) {
@@ -180,9 +169,9 @@ function eufyParseResultMessage(message) {
         case 'device.get_commands':
             if (message.result && message.result.serialNumber === uiGetDeviceSn()) {
                 if (Array.isArray(message.result.commands)) {
-                    uiShowVideoButton(message.result.commands.includes('start_livestream'));
-                    uiShowPositionPresetControls(message.result.commands.includes('preset_position'));
-                    uiShowPanTiltControls(message.result.commands.includes('pan_and_tilt'));
+                    uiShowVideoButton(message.result.commands.includes('deviceStartLivestream'));
+                    uiShowPositionPresetControls(message.result.commands.includes('devicePresetPosition'));
+                    uiShowPanTiltControls(message.result.commands.includes('devicePanAndTilt'));
                 }
             }
             break;
@@ -311,18 +300,6 @@ function eufyHandleImageDonloadedEvent(event, isPendingRequest = false) {
             eufyStationDatabaseQueryLatestInfo(stationSn);
         }
     }
-}
-
-/**
- * Sends a set_api_schema command to the server.
- * @param {number} version - The API schema version to set.
- */
-function eufySetApiSchema(version) {
-    wsSend(JSON.stringify({
-        messageId: 'set_api_schema',
-        command: 'set_api_schema',
-        schemaVersion: version
-    }));
 }
 
 /**

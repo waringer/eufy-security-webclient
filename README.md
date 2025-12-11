@@ -1,6 +1,6 @@
 # Eufy Security Web Client
 
-A web-based client and video transcoding server for [eufy-security-ws](https://github.com/bropat/eufy-security-ws), enabling live video streaming, device control, and H.265 to H.264/AAC transcoding via ffmpeg. This project provides a simple web UI for interacting with Eufy security cameras and requires a running eufy-security-ws server.
+A web-based client and video transcoding server using [eufy-security-client](https://github.com/bropat/eufy-security-client), enabling live video streaming, device control, and H.265 to H.264/AAC transcoding via ffmpeg. This project provides a simple web UI for interacting with Eufy security cameras and connects directly to the Eufy Cloud.
 
 ## Features
 - **Live video streaming** from Eufy cameras with H.265 to H.264/AAC transcoding (supports both H.265 and H.264 streams)
@@ -24,7 +24,12 @@ eufy-security-webclient/
 │   ├── video.js          # Video player and MSE logic
 │   ├── ws-client.js      # WebSocket client communication
 │   └── favicon.ico       # Favicon
-├── server.js             # Node.js proxy server with transcoding
+├── server.js             # Main server entry point
+├── eufy-client.js        # Eufy Security Client integration
+├── transcode.js          # FFmpeg transcoding logic
+├── ws-api.js             # WebSocket API server
+├── rest.js               # REST API and HTTP server
+├── utils.js              # Utility functions and configuration
 ├── package.json          # Project dependencies
 ├── Dockerfile            # Docker image configuration
 ├── docker-compose.yml    # Docker Compose setup
@@ -33,7 +38,7 @@ eufy-security-webclient/
 ```
 
 ## Prerequisites
-- **eufy-security-ws server**: You must have a running instance of [eufy-security-ws](https://github.com/bropat/eufy-security-ws). This web client connects to it for device and video data.
+- **Eufy account credentials**: Username, password, and country code for Eufy Cloud authentication
 - **Node.js >= 20**
 - **ffmpeg** (automatically installed in Docker)
 
@@ -45,17 +50,18 @@ eufy-security-webclient/
 ```sh
 docker-compose up --build
 ```
-This will build the image and start the proxy server on port `3001` (mapped to internal `3001`).
+This will build the image and start the server on port `3001`.
 
 #### Standalone Docker Build
 ```sh
 docker build -t eufy-security-webclient .
 docker run -p 3001:3001 \
   -v ./data:/app/data \
-  -e EUFY_WS_URL=ws://<your-eufy-ws-host>:3000 \
   eufy-security-webclient
 ```
-The `-v ./data:/app/data` volume mount ensures configuration changes persist across container restarts.
+The `-v ./data:/app/data` volume mount ensures configuration and Eufy authentication data persist across container restarts.
+
+**First-time setup**: Create `data/config.json` to add your Eufy credentials before starting the server or set Environment Variables and change Eufy settings using the web UI.
 
 ### 2. Local (npm)
 
@@ -69,11 +75,46 @@ npm start
 ```
 The web client will be available at [http://localhost:3001](http://localhost:3001).
 
-## Environment Variables
+## Configuration
+
+Configuration is managed through `data/config.json`. Create this file before first run:
+
+```json
+{
+  "EUFY_CONFIG": {
+    "username": "your-eufy-email@example.com",
+    "password": "your-eufy-password",
+    "persistentDir": "./data",
+    "country": "US",
+    "language": "en"
+  },
+  "TRANSCODING_PRESET": "ultrafast",
+  "TRANSCODING_CRF": "23",
+  "VIDEO_SCALE": "1280:-2",
+  "FFMPEG_THREADS": "4",
+  "FFMPEG_SHORT_KEYFRAMES": false
+}
+```
+
+### Configuration Options
+
+| Option                  | Default                | Description |
+|-------------------------|------------------------|-------------|
+| EUFY_CONFIG.username    | (required)             | Your Eufy account email |
+| EUFY_CONFIG.password    | (required)             | Your Eufy account password |
+| EUFY_CONFIG.persistentDir | ./data              | Directory for Eufy client data |
+| EUFY_CONFIG.country     | US                     | Country code (US, DE, UK, etc.) |
+| EUFY_CONFIG.language    | en                     | Language code (en, de, fr, etc.) |
+| TRANSCODING_PRESET      | ultrafast              | ffmpeg preset for transcoding |
+| TRANSCODING_CRF         | 23                     | ffmpeg CRF value (quality, 0-51) |
+| VIDEO_SCALE             | 1280:-2                | ffmpeg video scaling |
+| FFMPEG_THREADS          | 4                      | Number of ffmpeg threads |
+| FFMPEG_SHORT_KEYFRAMES  | false                  | Use short keyframes (true/false) |
+
+### Environment Variables
 
 | Variable                | Default                | Description |
 |-------------------------|------------------------|-------------|
-| EUFY_WS_URL             | ws://localhost:3000    | URL of your eufy-security-ws server |
 | LOGGINGLEVEL            | 2                      | Logging verbosity (0-3) |
 | TRANSCODING_PRESET      | ultrafast              | ffmpeg preset for transcoding |
 | TRANSCODING_CRF         | 23                     | ffmpeg CRF value (quality) |
@@ -86,7 +127,10 @@ The web client will be available at [http://localhost:3001](http://localhost:300
 
 You can set these in your `docker-compose.yml`, Docker run command, or as environment variables locally.
 
-**Note**: Transcoding configuration can also be changed dynamically at runtime via the web UI (Config button) or REST API endpoints.
+**Note**: When settings are defined in both Environment Variables and `config.json`, values in `data/config.json` take priority over the Environment Variables.
+
+
+**Note**: Transcoding configuration can be changed dynamically at runtime via the web UI (Config button) or REST API endpoints. Changes are persisted to `data/config.json`.
 
 
 ## Usage
@@ -118,7 +162,7 @@ The web client displays real-time notifications for:
 - **Motion detection events**
 - **Person detection events**
 
-Notifications appear in the bottom-right corner of the screen and automatically disappear after a few seconds.
+The browser's native notification system is used.
 
 ### Keyboard Shortcuts
 - **Arrow Keys**: PTZ control (Pan/Tilt - Up/Down/Left/Right)
@@ -129,55 +173,66 @@ Notifications appear in the bottom-right corner of the screen and automatically 
 
 ### API Endpoints
 - **GET /health**: Health check endpoint returning server status and configuration
-- **GET /config**: Get current transcoding configuration
-- **POST /config**: Update transcoding configuration (JSON body)
+- **GET /config**: Get current configuration
+- **POST /config**: Update configuration (JSON body)
 - **GET /:serialNumber.mp4**: Video transcoding stream endpoint (e.g., `/T8410P11234567890.mp4`)
 - **GET /quit**: Gracefully shut down the server
 - **Static files**: All files in `/public` are served at the root path
 
-### Using the Static Web UI Only
-If you do not need video streaming or transcoding, you can use the files in the `public` folder directly as a static web UI. You can open `public/index.html` in your browser via the `file://` protocol or serve the folder with any static web server. Device management and status features will work as long as you connect to a running eufy-security-ws server. 
+### WebSocket API
+The server provides a JSON-based WebSocket API at `ws://localhost:3001/api` for:
+- Real-time device status updates
+- Camera control commands
+- Event notifications (motion, person detection)
 
-**Note**: The video feature requires the proxy server (`server.js`) for transcoding and will not function without it.
-
-If you use the static files directly, you can edit the fallback configuration in `main.js` (lines 60-72 in the catch block) to set the correct WebSocket server URL and transcoding proxy URL for your environment.
+See [ws-api.js](ws-api.js) for the complete API specification.
 
 ## Development
 
 ### Debug Mode
-Enable debug mode by setting `debugMode = true` at the top of `public/main.js` to see detailed console logs and additional debug information in the UI.
+Enable client debug mode by setting `debugMode = true` at the top of `public/main.js` to see detailed console logs and additional debug information in the UI. For the server, set or change the `LOGGINGLEVEL` environment variable.
 
 ### Architecture
 The project follows a modular architecture:
-- **server.js**: Express server that handles ffmpeg transcoding
-- **ws-client.js**: WebSocket client handling communication with eufy-security-ws
-- **video.js**: Video player implementation using Media Source Extensions (MSE)
-- **ui.js**: UI event handlers and DOM manipulation
-- **main.js**: Application initialization and configuration
 
-All client-side code, comments, and variables are in English. The UI labels and messages are also in English by default.
+**Backend (Node.js):**
+- **server.js**: Main entry point, initializes all modules
+- **eufy-client.js**: Integration with eufy-security-client library
+- **transcode.js**: FFmpeg transcoding engine
+- **ws-api.js**: WebSocket API server for JSON-based communication
+- **rest.js**: REST API and HTTP server with static file serving
+- **utils.js**: Configuration management and logging utilities
+
+**Frontend (Browser):**
+- **main.js**: Application initialization and configuration
+- **ui.js**: UI event handlers and DOM manipulation
+- **video.js**: Video player implementation using Media Source Extensions (MSE)
+- **ws-client.js**: WebSocket client for server communication
+- **index.html/css**: UI structure and styling
+
+All code, comments, and variables are in English. The UI labels and messages are also in English by default.
 
 ## Notes
-- **A running eufy-security-ws server is required!** This client connects to it for all device operations.
-- **Only one device can be streamed at a time** per proxy instance. If multiple clients try to access different devices simultaneously, the second request will be rejected with a 409 Conflict error.
-- For production deployments, adjust environment variables for optimal performance and quality
+- **Direct Eufy Cloud connection**: This server connects directly to the Eufy Cloud using your credentials. No separate eufy-security-ws server is needed.
+- **Only one device can be streamed at a time** per server instance. If multiple clients try to access different devices simultaneously, the second request will be rejected with a 409 Conflict error.
+- **Persistent authentication**: Eufy authentication tokens are stored in `data/persistent.json` and persist across restarts.
+- For production deployments, adjust configuration settings for optimal performance and quality
 - ffmpeg is automatically installed in the Docker image
-- The client automatically falls back to default URLs if the health check endpoint is unavailable
 - Configuration changes made via the web UI are persisted to `data/config.json` and survive restarts
 
 ## Troubleshooting
 
 ### Video not playing
-- Ensure eufy-security-ws server is running and accessible
-- Check that the EUFY_WS_URL environment variable is correctly set
 - Verify ffmpeg is installed (for local installations)
 - Check browser console for errors
 - If you get a 409 error, another device is currently streaming - wait until it finishes
+- Ensure the selected device supports video streaming
 
 ### Connection issues
-- Verify the WebSocket URL in the configuration
-- Check firewall settings for ports 3000 (eufy-security-ws) and 3001 (web client)
-- Ensure the eufy-security-ws server is properly authenticated with Eufy Cloud
+- Verify Eufy credentials in `data/config.json` are correct
+- Check server logs for authentication errors
+- Ensure port 3001 is not blocked by firewall
+- For 2FA-enabled accounts, you may need to disable 2FA temporarily or use app-specific passwords
 
 ### Performance issues
 - Adjust TRANSCODING_PRESET to a faster preset (e.g., `superfast` or `ultrafast`)
@@ -199,7 +254,7 @@ All client-side code, comments, and variables are in English. The UI labels and 
 BSD-3-Clause - See [LICENSE](LICENSE) file for details.
 
 ## Links
-- [eufy-security-ws](https://github.com/bropat/eufy-security-ws) - The WebSocket server this client connects to
+- [eufy-security-client](https://github.com/bropat/eufy-security-client) - The client lib used to connect to Eufy
 
 ---
 
