@@ -24,17 +24,18 @@ eufy-security-webclient/
 │   ├── video.js          # Video player and MSE logic
 │   ├── ws-client.js      # WebSocket client communication
 │   └── favicon.ico       # Favicon
-├── server.js             # Main server entry point
-├── eufy-client.js        # Eufy Security Client integration
-├── transcode.js          # FFmpeg transcoding logic
-├── ws-api.js             # WebSocket API server
-├── rest.js               # REST API and HTTP server
-├── utils.js              # Utility functions and configuration
-├── package.json          # Project dependencies
-├── Dockerfile            # Docker image configuration
-├── docker-compose.yml    # Docker Compose setup
-├── LICENSE               # BSD-3-Clause license
-└── README.md             # This file
+├── server/                # Server-side modules
+│   ├── eufy-client.js    # Eufy Security Client integration
+│   ├── transcode.js      # FFmpeg transcoding logic
+│   ├── ws-api.js         # WebSocket API server
+│   ├── rest.js           # REST API and HTTP server
+│   └── utils.js          # Utility functions and configuration
+├── main.js                # Main server entry point
+├── package.json           # Project dependencies
+├── Dockerfile             # Docker image configuration
+├── docker-compose.yml     # Docker Compose setup
+├── LICENSE                # BSD-3-Clause license
+└── README.md              # This file
 ```
 
 ## Prerequisites
@@ -185,7 +186,7 @@ The server provides a JSON-based WebSocket API at `ws://localhost:3001/api` for:
 - Camera control commands
 - Event notifications (motion, person detection)
 
-See [ws-api.js](ws-api.js) for the complete API specification.
+See [server/ws-api.js](server/ws-api.js) for the complete API specification.
 
 ## Development
 
@@ -196,12 +197,12 @@ Enable client debug mode by setting `debugMode = true` at the top of `public/mai
 The project follows a modular architecture:
 
 **Backend (Node.js):**
-- **server.js**: Main entry point, initializes all modules
-- **eufy-client.js**: Integration with eufy-security-client library
-- **transcode.js**: FFmpeg transcoding engine
-- **ws-api.js**: WebSocket API server for JSON-based communication
-- **rest.js**: REST API and HTTP server with static file serving
-- **utils.js**: Configuration management and logging utilities
+- **main.js**: Main entry point, initializes all modules
+- **server/eufy-client.js**: Integration with eufy-security-client library
+- **server/transcode.js**: FFmpeg transcoding engine
+- **server/ws-api.js**: WebSocket API server for JSON-based communication
+- **server/rest.js**: REST API and HTTP server with static file serving
+- **server/utils.js**: Configuration management and logging utilities
 
 **Frontend (Browser):**
 - **main.js**: Application initialization and configuration
