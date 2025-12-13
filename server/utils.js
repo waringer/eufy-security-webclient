@@ -1,7 +1,10 @@
 const path = require('path');
 const fs = require('fs');
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+// Use environment variable to determine if in dev mode (NODE_ENV=development or DEV=true)
+const isDev = process.env.NODE_ENV === 'development' || process.env.DEV === 'true';
+
+const DATA_DIR = process.env.DATA_DIR || path.join(require.main.path, 'data');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const LOGGINGLEVEL = process.env.LOGGINGLEVEL || '2';
 
@@ -10,7 +13,7 @@ const DEFAULT_CONFIG = {
     EUFY_CONFIG: {
         username: '',
         password: '',
-        persistentDir: './data',
+        persistentDir: DATA_DIR,
         country: 'DE',
         language: 'en'
     },
@@ -22,6 +25,9 @@ const DEFAULT_CONFIG = {
 };
 
 let activeStreamClients = new Set();
+
+log('🔧 Utils module initialized', 'debug');
+log(`🔧 Development mode: ${isDev}`, 'info');
 
 // Load configuration from file or use defaults
 function loadConfig() {
@@ -101,5 +107,6 @@ module.exports = {
     removeActiveStreamClient,
     clearActiveStreamClients,
     getActiveStreamClients,
+    get isDev() { return isDev; },
     log
 };

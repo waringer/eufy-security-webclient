@@ -1,9 +1,9 @@
 // eufy-security-client Streaming Proxy Server
 
-const utils = require('./utils');
-const transcode = require('./transcode');
-const eufy = require('./eufy-client');
-const restServer = require('./rest');
+const utils = require('./server/utils');
+const transcode = require('./server/transcode');
+const eufy = require('./server/eufy-client');
+const restServer = require('./server/rest');
 
 let CONFIG = utils.loadConfig();
 

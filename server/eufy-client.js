@@ -1,7 +1,9 @@
-const { EufySecurity, AudioCodec, VideoCodec } = require('eufy-security-client');
-const eufyVersion = require('eufy-security-client/package.json').version;
-
 const utils = require('./utils');
+
+const eufyClientPath = utils.isDev ? '../../eufy-security-client' : 'eufy-security-client';
+const { EufySecurity, AudioCodec, VideoCodec } = require(eufyClientPath);
+const eufyVersion = require(`${eufyClientPath}/package.json`).version;
+
 const transcode = require('./transcode');
 const wsApi = require('./ws-api');
 
@@ -852,7 +854,19 @@ function registerWebSocketHandlers() {
     wsApi.registerMessageHandler('device.preset_position', async (message, ws) => {
         const device = await eufyClient.getDevice(message.serialNumber);
         const station = await eufyClient.getStation(device.getStationSerial());
-        station.presetPosition(device, message.position);
+        try {
+            station.presetPosition(device, message.position)
+        }
+        catch (error) {
+            utils.log(`❌ Error presetting position for device ${device.getName()} (${device.getSerial()}): ${error.message}`, 'error');
+            return {
+                type: "result",
+                success: false,
+                messageId: "device.preset_position",
+                errorCode: error.message,
+                value: message.position
+            };
+        };
         return {
             type: "result",
             success: true,

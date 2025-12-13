@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.log('eufywsUrl from /health:', data.eufyConnected);
             eufywsUrl = document.location.origin.replace(/^http/, 'ws') + '/api';
             transcodeServerUrl = document.location.origin;
-            presetButtons = 6;
+            presetButtons = 4;
             uiInit();
             restGetConfig();
             wsToggleConnection();
@@ -68,7 +68,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.log('Falling back to default URLs.');
             eufywsUrl = 'ws://localhost:3001/api';
             transcodeServerUrl = 'http://localhost:3001';
-            presetButtons = 6;
+            presetButtons = 4;
             uiInit();
         });
 });

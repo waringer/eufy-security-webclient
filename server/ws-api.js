@@ -1,10 +1,10 @@
 // WebSocket API Server for JSON-based communication
+const utils = require('./utils');
+const eufyClientPath = utils.isDev ? '../../eufy-security-client' : 'eufy-security-client';
 
 const { WebSocketServer } = require('ws');
-const eufyVersion = require('eufy-security-client/package.json').version;
-const serverVersion = require('./package.json').version;
-
-const utils = require('./utils');
+const eufyVersion = require(`${eufyClientPath}/package.json`).version;
+const serverVersion = require('../package.json').version;
 
 let wss = null; // WebSocket Server instance
 const wsClients = new Set(); // Connected WebSocket clients

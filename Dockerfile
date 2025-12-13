@@ -17,6 +17,7 @@ RUN npm install --omit=dev && npm cache clean --force
 
 # Copy application code
 COPY *.js ./
+COPY server ./server
 COPY public ./public
 
 # Create data directory for persistent config
@@ -30,4 +31,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD node -e "require('http').get('http://localhost:3001/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
 
 # Start the server
-CMD ["node", "server.js"]
+CMD ["node", "main.js"]

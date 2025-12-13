@@ -688,7 +688,6 @@ function uiOpenConfigModal() {
             EUFY_CONFIG: {
                 username: document.getElementById('config-eufy-username').value,
                 password: document.getElementById('config-eufy-password').value,
-                persistentDir: './data',
                 country: document.getElementById('config-eufy-country').value,
                 language: document.getElementById('config-eufy-language').value
             },

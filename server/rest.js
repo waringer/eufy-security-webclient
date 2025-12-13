@@ -6,7 +6,7 @@ const eufy = require('./eufy-client');
 const transcode = require('./transcode');
 const wsApi = require('./ws-api');
 
-const STATIC_DIR = process.env.STATIC_DIR || path.join(__dirname, 'public');
+const STATIC_DIR = process.env.STATIC_DIR || path.join(require.main.path, 'public');
 
 const app = express();
 const PORT = 3001;
@@ -193,7 +193,13 @@ function initRestServer() {
             if (allowedKeys.includes(key)) {
                 // Only add to updatedFields if value actually changed
                 if (JSON.stringify(CONFIG[key]) !== JSON.stringify(newConfig[key])) {
-                    CONFIG[key] = newConfig[key];
+                    if (key === 'EUFY_CONFIG') {
+                        // Merge EUFY_CONFIG subfields
+                        CONFIG[key] = { ...CONFIG[key], ...newConfig[key] };
+                    } else {
+                        CONFIG[key] = newConfig[key];
+                    }
+
                     updatedFields.push(key);
                 }
             }
