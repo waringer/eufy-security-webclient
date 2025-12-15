@@ -1,59 +1,89 @@
-// WebSocket API Server for JSON-based communication
+/**
+ * WebSocket API Server Module
+ * 
+ * Provides real-time bidirectional communication via WebSocket for:
+ * - JSON-based API commands
+ * - Event broadcasting to all connected clients
+ * - Dynamic message handler registration
+ * - Client connection management
+ * 
+ * WebSocket endpoint: ws://localhost:PORT/api
+ */
+
 const utils = require('./utils');
+// Use local eufy-security-client in dev mode, installed package in production
 const eufyClientPath = utils.isDev ? '../../eufy-security-client' : 'eufy-security-client';
 
 const { WebSocketServer } = require('ws');
 const eufyVersion = require(`${eufyClientPath}/package.json`).version;
 const serverVersion = require('../package.json').version;
 
-let wss = null; // WebSocket Server instance
-const wsClients = new Set(); // Connected WebSocket clients
-const messageHandlers = new Map(); // Registered message handlers
+let wss = null;                          // WebSocket Server instance
+const wsClients = new Set();             // Set of connected WebSocket clients
+const messageHandlers = new Map();       // Map of command -> handler function
 
 /**
- * Initializes the WebSocket server for JSON-based API communication
- * @param {http.Server} httpServer - The HTTP server instance to attach to
- * @param {number} port - The port number for logging
-  */
+ * Initialize WebSocket Server
+ * Sets up WebSocket server for real-time JSON-based API communication
+ * @param {http.Server} httpServer - HTTP server instance to attach WebSocket server to
+ * @param {number} port - Port number for logging purposes
+ */
 function initWebSocketServer(httpServer, port) {
     wss = new WebSocketServer({
-        noServer: true,
-        path: '/api'
+        noServer: true,        // Manual upgrade handling for path filtering
+        path: '/api'           // WebSocket endpoint path
     });
 
     // Handle WebSocket upgrade requests
     httpServer.on('upgrade', (request, socket, head) => {
         const pathname = new URL(request.url, `http://${request.headers.host}`).pathname;
 
+        // Only upgrade connections to /api endpoint
         if (pathname === '/api') {
             wss.handleUpgrade(request, socket, head, (ws) => {
                 wss.emit('connection', ws, request);
             });
         } else {
+            // Reject connections to other paths
             socket.destroy();
         }
     });
 
+    /**
+     * Handle new WebSocket client connections
+     */
     wss.on('connection', (ws, request) => {
         const clientIp = request.socket.remoteAddress;
         utils.log(`🔌 WebSocket API client connected from ${clientIp}`, 'info');
 
+        // Register new client
         wsClients.add(ws);
 
-        // Send welcome message
+        // Ensure handlers are registered before accepting connections
+        if (messageHandlers.size === 0) {
+            utils.log('⚠️ No WebSocket message handlers registered! Closing connection.', 'warn');
+            ws.close();
+            return;
+        }
+
+        // Send version information as welcome message
         wsSendToClient(ws, {
             type: 'version',
             serverVersion: serverVersion,
             clientVersion: eufyVersion,
         });
 
-        // Handle incoming messages
+        /**
+         * Handle incoming messages from client
+         * Parses JSON and dispatches to registered handlers
+         */
         ws.on('message', (data) => {
             try {
                 const message = JSON.parse(data.toString());
                 handleWebSocketMessage(ws, message);
             } catch (error) {
                 utils.log(`❌ WebSocket API parsing error: ${error.message}`, 'error');
+                // Notify client about invalid JSON
                 wsSendToClient(ws, {
                     type: 'error',
                     error: 'Invalid JSON format',
@@ -62,13 +92,19 @@ function initWebSocketServer(httpServer, port) {
             }
         });
 
-        // Handle client disconnect
+        /**
+         * Handle client disconnection
+         * Cleanup and remove from active clients
+         */
         ws.on('close', () => {
             wsClients.delete(ws);
             utils.log(`🔌 WebSocket API client disconnected (${wsClients.size} remaining)`, 'info');
         });
 
-        // Handle errors
+        /**
+         * Handle WebSocket errors
+         * Log and cleanup connection
+         */
         ws.on('error', (error) => {
             utils.log(`❌ WebSocket API error: ${error.message}`, 'error');
             wsClients.delete(ws);
@@ -79,13 +115,16 @@ function initWebSocketServer(httpServer, port) {
 }
 
 /**
- * Handles incoming WebSocket messages and dispatches events
- * @param {WebSocket} ws - The client WebSocket connection
- * @param {Object} message - The parsed JSON message
-  */
+ * Handle WebSocket Message
+ * Processes incoming messages and dispatches to appropriate handlers
+ * Supports both synchronous and asynchronous (Promise-based) handlers
+ * @param {WebSocket} ws - Client WebSocket connection
+ * @param {Object} message - Parsed JSON message object
+ */
 function handleWebSocketMessage(ws, message) {
     utils.log(`📨 WebSocket API message: ${JSON.stringify(message)}`, 'debug');
 
+    // Validate message has required command field
     if (!message.command) {
         wsSendToClient(ws, {
             type: 'error',
@@ -95,15 +134,16 @@ function handleWebSocketMessage(ws, message) {
         return;
     }
 
-    // Check if there's a registered handler for this message type
+    // Dispatch to registered handler if available
     if (messageHandlers.has(message.command)) {
         const handler = messageHandlers.get(message.command);
         try {
             const result = handler(message, ws);
-            // If handler returns a promise, handle it
+            // Handle async handlers (Promise-based)
             if (result && typeof result.then === 'function') {
                 result
                     .then((response) => {
+                        // Send response if handler returns data
                         if (response) {
                             wsSendToClient(ws, response);
                         }
@@ -117,7 +157,7 @@ function handleWebSocketMessage(ws, message) {
                         });
                     });
             } else if (result) {
-                // Synchronous result
+                // Handle synchronous result from handler
                 wsSendToClient(ws, result);
             }
         } catch (error) {
@@ -130,6 +170,7 @@ function handleWebSocketMessage(ws, message) {
             });
         }
     } else {
+        // Command not registered - notify client
         wsSendToClient(ws, {
             type: 'result',
             error: 'Unknown command',
@@ -140,9 +181,11 @@ function handleWebSocketMessage(ws, message) {
 }
 
 /**
- * Sends a JSON message to a specific WebSocket client
- * @param {WebSocket} ws - The client WebSocket connection
- * @param {Object} message - The message object to send
+ * Send Message to Client
+ * Sends JSON message to a specific WebSocket client
+ * Only sends if connection is open
+ * @param {WebSocket} ws - Client WebSocket connection
+ * @param {Object} message - Message object to serialize and send
  */
 function wsSendToClient(ws, message) {
     if (ws.readyState === ws.OPEN) {
@@ -155,8 +198,10 @@ function wsSendToClient(ws, message) {
 }
 
 /**
- * Broadcasts a message to all connected WebSocket clients
- * @param {Object} message - The message object to broadcast
+ * Broadcast Message
+ * Sends JSON message to all connected WebSocket clients
+ * Useful for event notifications that all clients should receive
+ * @param {Object} message - Message object to broadcast
  */
 function wsBroadcast(message) {
     const messageStr = JSON.stringify(message);
@@ -172,9 +217,12 @@ function wsBroadcast(message) {
 }
 
 /**
- * Registers a handler for a specific message type
- * @param {string} messageType - The message type to handle
- * @param {Function} handler - Handler function (message, ws) => response or Promise<response>
+ * Register Message Handler
+ * Registers a handler function for a specific command type
+ * Handlers can be synchronous or return Promises for async operations
+ * @param {string} messageType - Command type to handle (e.g., 'start_stream')
+ * @param {Function} handler - Handler function (message, ws) => response|Promise<response>
+ * @throws {Error} If handler is not a function
  */
 function registerMessageHandler(messageType, handler) {
     if (typeof handler !== 'function') {
@@ -185,8 +233,10 @@ function registerMessageHandler(messageType, handler) {
 }
 
 /**
- * Unregisters a handler for a specific message type
- * @param {string} messageType - The message type to unregister
+ * Unregister Message Handler
+ * Removes a previously registered command handler
+ * @param {string} messageType - Command type to unregister
+ * @returns {boolean} True if handler was found and removed
  */
 function unregisterMessageHandler(messageType) {
     const removed = messageHandlers.delete(messageType);
@@ -197,13 +247,19 @@ function unregisterMessageHandler(messageType) {
 }
 
 /**
- * Gets all registered message types
- * @returns {Array<string>} Array of registered message types
+ * Get Registered Message Types
+ * Returns list of all currently registered command types
+ * Useful for debugging and capability discovery
+ * @returns {Array<string>} Array of registered command types
  */
 function getRegisteredMessageTypes() {
     return Array.from(messageHandlers.keys());
 }
 
+/**
+ * Module Exports
+ * Exposes WebSocket server management and communication functions
+ */
 module.exports = {
     initWebSocketServer,
     wsBroadcast,

@@ -1,3 +1,14 @@
+/**
+ * REST API Server Module
+ * 
+ * Provides HTTP endpoints for:
+ * - Live video streaming via fMP4 format
+ * - Configuration management (GET/POST)
+ * - Health status monitoring
+ * - Static file serving for web UI
+ * - WebSocket API integration
+ */
+
 const express = require('express');
 const path = require('path');
 
@@ -6,23 +17,27 @@ const eufy = require('./eufy-client');
 const transcode = require('./transcode');
 const wsApi = require('./ws-api');
 
+// Directory for static files (HTML, CSS, JS)
 const STATIC_DIR = process.env.STATIC_DIR || path.join(require.main.path, 'public');
 
 const app = express();
 const PORT = 3001;
 
-let currentDevice = null; // Currently streamed device
+// Currently active streaming device (only one device can stream at a time)
+let currentDevice = null;
 
+/**
+ * Initialize REST API Server
+ * Sets up all HTTP endpoints, middleware, and WebSocket integration
+ */
 function initRestServer() {
-    // **** Express HTTP Server ****
-
     utils.log(`📺 Stream URL: http://localhost:${PORT}/<SERIAL_NUMBER>.mp4`, 'info');
     utils.log(`📁 Static files from: ${STATIC_DIR}`, 'info');
 
-    // JSON body parser middleware
+    // Enable JSON body parsing for POST requests
     app.use(express.json());
 
-    // CORS Headers
+    // Enable CORS for cross-origin requests from web clients
     app.use((req, res, next) => {
         res.header('Access-Control-Allow-Origin', '*');
         res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -30,11 +45,17 @@ function initRestServer() {
         next();
     });
 
-    // fMP4 Live Stream Endpoint with device selection
+    /**
+     * fMP4 Live Stream Endpoint
+     * Route: GET /:serialNumber.mp4
+     * 
+     * Streams live video from a Eufy device in fMP4 format.
+     * Only one device can stream at a time to prevent resource conflicts.
+     */
     app.get('/:serialNumber.mp4', (req, res) => {
         const requestedDevice = req.params.serialNumber;
 
-        // Validate serial number (alphanumeric)
+        // Validate serial number format (must be alphanumeric)
         if (!/^[A-Z0-9]+$/i.test(requestedDevice)) {
             return res.status(400).json({
                 error: 'Invalid serial number format',
@@ -42,7 +63,7 @@ function initRestServer() {
             });
         }
 
-        // Check if another device is already streaming
+        // Prevent multiple simultaneous streams (resource limitation)
         if (currentDevice && currentDevice !== requestedDevice) {
             utils.log(`❌ Request for ${requestedDevice} denied - ${currentDevice} is already streaming`, 'warn');
             return res.status(409).json({
@@ -55,7 +76,7 @@ function initRestServer() {
 
         utils.log(`👁️ New stream client for ${requestedDevice} (${utils.getActiveStreamClients().size + 1} active)`, 'info');
 
-        // HTTP headers for fMP4 streaming
+        // Set HTTP headers optimized for live fMP4 streaming
         res.writeHead(200, {
             'Content-Type': 'video/mp4',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -63,16 +84,17 @@ function initRestServer() {
             'Transfer-Encoding': 'chunked'
         });
 
-        // Set current device
+        // Set this device as the active streaming device
         if (!currentDevice) {
             currentDevice = requestedDevice;
             utils.log(`📹 Device set: ${currentDevice}`, 'info');
         }
 
-        // Start connection if not active
+        // Initialize Eufy stream and transcoding for this device
         eufy.startStreamForDevice(requestedDevice);
+        transcode.currentDevice = requestedDevice;
 
-        // Add client to set
+        // Create client stream object to track this connection
         const clientStream = {
             response: res,
             active: true,
@@ -82,8 +104,11 @@ function initRestServer() {
         };
         utils.addActiveStreamClient(clientStream);
 
-        // Register output stream listener IMMEDIATELY (before transcoding even starts)
-        // This ensures the first client doesn't miss any data
+        /**
+         * Stream data handler
+         * Forwards transcoded video chunks to the HTTP client.
+         * Registered immediately to ensure no data is missed.
+         */
         const streamDataHandler = (chunk) => {
             if (clientStream.active && !res.writableEnded && clientStream.hasReceivedInit) {
                 try {
@@ -95,18 +120,22 @@ function initRestServer() {
             }
         };
 
-        // Wait until transcoding is running and init segment is available
+        /**
+         * Wait for transcoding to start and init segment to be ready
+         * The init segment contains essential fMP4 metadata that must be
+         * sent before any media data
+         */
         const waitForStream = setInterval(() => {
             const outputStream = transcode.getOutputStream;
             if (outputStream && transcode.isTranscoding) {
-                // Register listener if not already done
+                // Register stream listener (only once per client)
                 if (!clientStream.listenerRegistered) {
                     outputStream.on('data', streamDataHandler);
                     clientStream.listenerRegistered = true;
                     utils.log(`🎧 Registered stream listener for client`, 'debug');
                 }
 
-                // If we have init segment, send it immediately
+                // Send fMP4 init segment to client (contains codec info, timescale, etc.)
                 const initSegment = transcode.getInitSegment;
                 if (initSegment && !clientStream.hasReceivedInit) {
                     utils.log(`📦 Sending init segment to client (${initSegment.length} bytes)`, 'debug');
@@ -125,7 +154,7 @@ function initRestServer() {
             }
         }, 100);
 
-        // Timeout after 10 seconds
+        // Timeout after 10 seconds if stream doesn't start
         setTimeout(() => {
             clearInterval(waitForStream);
             if (!res.headersSent) {
@@ -133,17 +162,20 @@ function initRestServer() {
             }
         }, 10000);
 
-        // Client disconnect handling
+        /**
+         * Handle client disconnection
+         * Cleanup resources and stop streaming if no clients remain
+         */
         req.on('close', () => {
             clearInterval(waitForStream);
 
-            // Remove stream listener if registered
+            // Cleanup stream listener to prevent memory leaks
             const outputStream = transcode.getOutputStream;
             if (clientStream.listenerRegistered && outputStream) {
                 outputStream.removeListener('data', streamDataHandler);
             }
 
-            // Remove client from set
+            // Remove this client from active clients list
             for (let client of utils.getActiveStreamClients()) {
                 if (client.response === res) {
                     client.active = false;
@@ -154,14 +186,15 @@ function initRestServer() {
 
             utils.log(`👁️ Stream client lost (${utils.getActiveStreamClients().size} active)`, 'info');
 
-            // Stop if no clients are left
+            // Stop streaming if all clients have disconnected (with grace period)
             if (utils.getActiveStreamClients().size === 0) {
+                // Wait 5 seconds before stopping (allows quick reconnections)
                 setTimeout(() => {
                     if (utils.getActiveStreamClients().size === 0) {
                         eufy.stopStreamForDevice(requestedDevice);
                         transcode.stopTranscoding();
 
-                        // Reset currentDevice after a short delay
+                        // Release device after additional 2 second delay
                         setTimeout(() => {
                             if (utils.getActiveStreamClients().size === 0) {
                                 utils.log(`📹 Device released: ${currentDevice}`, 'info');
@@ -174,24 +207,33 @@ function initRestServer() {
         });
     });
 
-    // Config GET endpoint - returns current configuration
+    /**
+     * Configuration GET Endpoint
+     * Route: GET /config
+     * Returns current server configuration
+     */
     app.get('/config', (req, res) => {
         res.json(utils.loadConfig());
     });
 
-    // Config POST endpoint - updates configuration
+    /**
+     * Configuration POST Endpoint
+     * Route: POST /config
+     * Updates server configuration dynamically
+     * Restarts affected services automatically
+     */
     app.post('/config', (req, res) => {
         const newConfig = req.body;
         utils.log(`📝 Config update requested: ${JSON.stringify(newConfig)}`, 'debug');
 
-        // Validate and update CONFIG
+        // Whitelist of allowed configuration keys for security
         const allowedKeys = ['EUFY_CONFIG', 'TRANSCODING_PRESET', 'TRANSCODING_CRF', 'VIDEO_SCALE', 'FFMPEG_THREADS', 'FFMPEG_SHORT_KEYFRAMES'];
         const updatedFields = [];
 
         let CONFIG = utils.loadConfig();
         for (const key of Object.keys(newConfig)) {
             if (allowedKeys.includes(key)) {
-                // Only add to updatedFields if value actually changed
+                // Track only fields that actually changed (avoid unnecessary restarts)
                 if (JSON.stringify(CONFIG[key]) !== JSON.stringify(newConfig[key])) {
                     if (key === 'EUFY_CONFIG') {
                         // Merge EUFY_CONFIG subfields
@@ -208,10 +250,10 @@ function initRestServer() {
         if (updatedFields.length > 0) {
             utils.log(`✅ Config updated: ${updatedFields.join(', ')}`, 'debug');
 
-            // Save configuration to file
+            // Persist configuration changes to disk
             const saved = utils.saveConfig(CONFIG);
 
-            // Reinitialize services only if relevant fields changed
+            // Determine which services need to be restarted based on changed fields
             const transcodingFields = ['TRANSCODING_PRESET', 'TRANSCODING_CRF', 'VIDEO_SCALE', 'FFMPEG_THREADS', 'FFMPEG_SHORT_KEYFRAMES'];
             const eufyFields = ['EUFY_CONFIG'];
 
@@ -246,7 +288,11 @@ function initRestServer() {
         }
     });
 
-    // Health check endpoint
+    /**
+     * Health Check Endpoint
+     * Route: GET /health
+     * Returns current server status and streaming information
+     */
     app.get('/health', (req, res) => {
         res.json({
             status: 'ok',
@@ -262,6 +308,11 @@ function initRestServer() {
         });
     });
 
+    /**
+     * Shutdown Endpoint
+     * Route: GET /quit
+     * Gracefully shuts down the server
+     */
     app.get('/quit', (req, res) => {
         res.json({ status: 'shutting down' });
         utils.log('🛑 Shutting down...', 'warn');
@@ -269,7 +320,7 @@ function initRestServer() {
         process.exit(0);
     });
 
-    // Static file server
+    // Serve static files (HTML, CSS, JS) for the web UI
     app.use(express.static(STATIC_DIR, {
         index: 'index.html',
         extensions: ['html', 'htm']
@@ -280,12 +331,14 @@ function initRestServer() {
         utils.log(`📺 Stream format: http://localhost:${PORT}/<SERIAL_NUMBER>.mp4`, 'info');
     });
 
-    // Initialize WebSocket Server on /api path
+    // Initialize WebSocket API on /api path for real-time communication
     wsApi.initWebSocketServer(server, PORT, getServerStatus);
 }
 
 /**
- * Returns current server status for WebSocket API
+ * Get Server Status
+ * Returns current operational status for WebSocket API and monitoring
+ * @returns {Object} Server status including connection states and active streams
  */
 function getServerStatus() {
     return {

@@ -1,49 +1,110 @@
-// WebSocket server URL
-// See https://bropat.github.io/eufy-security-ws/#/ or https://github.com/bropat/eufy-security-ws/
-let eufywsUrl;
-let eufyws;
-let stationSn = null;
-let lastPreset = null;
-let pathToDeviceSnMap = [];
-let pendingImageRequest = null;
+/**
+ * WebSocket Client for Eufy Security
+ * 
+ * Manages bidirectional WebSocket communication with Eufy Security WebSocket server.
+ * Handles device discovery, property queries, command execution, and real-time events.
+ * 
+ * Protocol Documentation:
+ * - https://bropat.github.io/eufy-security-ws/#/
+ * - https://github.com/bropat/eufy-security-ws/
+ * 
+ * Dependencies: ui.js, main.js
+ */
 
-// General WebSocket functions
+// WebSocket connection state
+let eufywsUrl;                      // WebSocket server URL (set from main.js)
+let eufyws;                         // Active WebSocket connection instance
+let stationSn = null;               // Currently connected station serial number
+let lastPreset = null;              // Last executed preset position number
+let pathToDeviceSnMap = [];         // Cache for image path to device SN mapping
+let pendingImageRequest = null;     // Queued image request awaiting database query
+let userDisconnectedWs = false;     // Flag to prevent auto-reconnect after manual disconnect
+let isAutoReconnecting = false;     // Flag indicating if auto-reconnect is in progress
+
+// ============================================================================
+// General WebSocket Functions
+// ============================================================================
 
 /**
- * Toggles the WebSocket connection (connect/disconnect).
+ * Toggle WebSocket Connection
+ * Connects if disconnected, disconnects if connected
  */
 function wsToggleConnection() {
-    if (!eufyws || !eufyws.OPEN)
+    if (!eufyws) {
+        debugConsoleLog('WebSocket is not connected, attempting to connect...');
         wsConnect(eufywsUrl);
-    else
-        wsDisconnect();
-}
-
-/**
- * Establishes a new WebSocket connection and sets up event handlers.
- * @param {string} url - The WebSocket server URL.
- */
-function wsConnect(url) {
-    eufyws = new WebSocket(url);
-    eufyws.onopen = wsConnected;
-    eufyws.onmessage = wsMessage;
-    eufyws.onclose = wsDisconnected;
-    eufyws.onerror = wsError;
-}
-
-/**
- * Closes the WebSocket connection and resets the ws variable.
- */
-function wsDisconnect() {
-    if (eufyws) {
-        eufyws.close();
-        videoStopStream();
+        uiUpdateConnectButtonState();
+    } else {
+        if (isAutoReconnecting) {
+            // Cancel auto-reconnect attempt
+            userDisconnectedWs = true;
+            isAutoReconnecting = false;
+            debugConsoleLog('Auto-reconnect attempt cancelled by user.');
+            uiUpdateConnectButtonState();
+        } else {
+            switch (eufyws.readyState) {
+                case WebSocket.CONNECTING:
+                    debugConsoleLog('WebSocket is connecting, please wait...');
+                    uiUpdateConnectButtonState();
+                    break;
+                case WebSocket.OPEN:
+                    debugConsoleLog('Disconnecting WebSocket as per user request...');
+                    wsDisconnect();
+                    uiUpdateConnectButtonState();
+                    break;
+                case WebSocket.CLOSING:
+                    debugConsoleLog('WebSocket is closing, please wait...');
+                    uiUpdateConnectButtonState();
+                    break;
+                case WebSocket.CLOSED:
+                    debugConsoleLog('WebSocket is closed, reconnecting as per user request...');
+                    wsConnect(eufywsUrl);
+                    uiUpdateConnectButtonState();
+                    break;
+                default:
+                    break;
+            }
+        }
     }
 }
 
 /**
- * Sends data over the WebSocket connection if open.
- * @param {string} data - The data to send (usually JSON string).
+ * Establish WebSocket Connection
+ * Creates new WebSocket instance and attaches event handlers
+ * @param {string} url - WebSocket server URL
+ * @param {boolean} isUserInitiated - True if user triggered, false for auto-reconnect
+ */
+function wsConnect(url, isUserInitiated = true) {
+    eufyws = new WebSocket(url);
+
+    // Attach WebSocket lifecycle handlers
+    eufyws.onopen = wsConnected;
+    eufyws.onmessage = wsMessage;
+    eufyws.onclose = wsDisconnected;
+    eufyws.onerror = wsError;
+
+    // Track manual disconnects to prevent unwanted auto-reconnect
+    if (isUserInitiated) userDisconnectedWs = false;
+    uiUpdateStatus('Connecting...', 'orange');
+}
+
+/**
+ * Disconnect WebSocket
+ * Closes connection and stops any active video streams
+ */
+function wsDisconnect() {
+    if (eufyws) {
+        userDisconnectedWs = true;  // Prevent auto-reconnect
+        isAutoReconnecting = false;
+        eufyws.close();
+        videoStopStream();          // Stop livestream if active
+    }
+}
+
+/**
+ * Send WebSocket Message
+ * Sends data if connection is open, otherwise silently fails
+ * @param {string} data - JSON string to send
  */
 function wsSend(data) {
     if (eufyws && eufyws.readyState === WebSocket.OPEN) {
@@ -52,51 +113,84 @@ function wsSend(data) {
 }
 
 /**
- * Handler for WebSocket 'open' event. Updates status and resets display.
+ * WebSocket Connected Handler
+ * Called when connection is successfully established
  */
 function wsConnected() {
+    isAutoReconnecting = false;
     uiUpdateStatus('Connected', 'orange');
     uiReset();
 }
 
 /**
- * Handler for WebSocket 'close' event. Updates status and resets display.
+ * WebSocket Disconnected Handler
+ * Implements auto-reconnect logic for unintended disconnects
  */
 function wsDisconnected() {
     uiUpdateStatus('Not connected', 'red');
     eufyws = null;
     stationSn = null;
+    isAutoReconnecting = !userDisconnectedWs;
     uiReset();
+
+    // Auto-reconnect after 5 seconds (unless user manually disconnected)
+    if (!userDisconnectedWs) {
+        // Show countdown for reconnecting
+        let countdown = 5;
+        uiUpdateStatus(`Reconnecting in ${countdown} seconds...`, 'orange');
+        const interval = setInterval(() => {
+            countdown--;
+            if (countdown > 0) {
+                uiUpdateStatus(`Reconnecting in ${countdown} seconds...`, 'orange');
+            } else {
+                clearInterval(interval);
+            }
+        }, 1000);
+
+        setTimeout(() => {
+            if (!eufyws) {
+                debugConsoleLog('Attempting to reconnect WebSocket...');
+                wsConnect(eufywsUrl, false);  // Auto-reconnect flag
+            } else {
+                debugConsoleLog('WebSocket already connected, skipping auto-reconnect.');
+            }
+        }, 5000);
+    }
 }
 
 /**
- * Handler for WebSocket 'error' event. Updates status and logs error.
- * @param {Event} err - The error event.
+ * WebSocket Error Handler
+ * Handles connection errors and updates UI
+ * @param {Event} err - Error event from WebSocket
  */
 function wsError(err) {
     uiUpdateStatus('Connection error', 'red');
-    uiDebugLog('Error: ' + (err && err.message ? err.message : err));
+    uiDebugLog('WebSocket error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    debugConsoleLog('WebSocket error:', err);
+    uiUpdateStatus('Connection error', 'red');
     uiReset();
 }
 
 /**
- * Handler for WebSocket 'message' event. Parses and dispatches messages.
- * @param {MessageEvent} event - The message event containing data from the server.
+ * WebSocket Message Handler
+ * Parses incoming messages and dispatches to appropriate handlers
+ * @param {MessageEvent} event - Message event with JSON data
  */
 function wsMessage(event) {
     try {
         debugConsoleLog('Message received:', event.data);
         const data = JSON.parse(event.data);
 
+        // Route message by type to specialized handlers
         switch (data.type) {
             case 'version':
-                eufyParseVersionMessage(data);
+                eufyParseVersionMessage(data);  // Server version info
                 break;
             case 'result':
-                eufyParseResultMessage(data);
+                eufyParseResultMessage(data);   // Command responses
                 break;
             case 'event':
-                eufyParseEventMessage(data);
+                eufyParseEventMessage(data);    // Real-time events
                 break;
             default:
                 debugConsoleLog('Unknown message type:', data.type);
@@ -111,82 +205,97 @@ function wsMessage(event) {
     }
 }
 
-// Eufy WebSocket protocol functions
+// ============================================================================
+// Eufy Protocol Message Handlers
+// ============================================================================
 
 /**
- * Handles 'version' messages from the server, sets API schema version.
- * @param {Object} data - The version message data.
+ * Parse Version Message
+ * Handles initial version handshake and starts listening
+ * @param {Object} data - Version message with client/server versions
  */
 function eufyParseVersionMessage(data) {
     uiUpdateEufyWSVersion(data.clientVersion, data.serverVersion, 0, 0);
-    eufyStartListening();
+    eufyStartListening();  // Begin receiving device events
 }
 
 /**
- * Handles 'result' messages from the server and updates UI or sends further requests.
- * @param {Object} message - The result message data.
+ * Parse Result Message
+ * Handles responses to client commands (get_properties, preset_position, etc.)
+ * @param {Object} message - Result message with messageId and success/error fields
  */
 function eufyParseResultMessage(message) {
     switch (message.messageId) {
-        case 'start_listening':
-            // Show info for start_listening
+        case 'start_listening':  // Initial connection established
             if (message.success && message.result && message.result.state) {
                 uiUpdateStatus('Listening started', 'darkseagreen');
                 uiDebugLog('Listening started successfully.');
 
-                // Show station SN (only one is assumed)
+                // Extract station SN (assumes single station setup)
                 const stations = message.result.state.stations;
                 stationSn = Array.isArray(stations) && stations.length > 0 ? stations[0] : '';
                 uiUpdateStationSn(stationSn);
 
-                // Get station properties if SN exists
+                // Load station properties automatically
                 if (stationSn)
                     eufyStationGetProperties(stationSn);
 
-                // Fill devices dropdown
+                // Populate device dropdown with discovered devices
                 uiMakeDeviceList(message.result.state.devices || []);
             } else {
+                // Connection failed
                 uiUpdateStatus('Listening error', 'red');
                 uiDebugLog('Listening error: ' + (message.error || ''));
                 uiUpdateStationSn(null);
                 uiMakeDeviceList([]);
             }
             break;
-        case 'device.get_properties':
+        case 'device.get_properties':  // Device property response
             if (message.result && message.result.properties &&
                 message.result.serialNumber === uiGetDeviceSn()) {
                 const props = message.result.properties;
+
+                // Update UI with device properties
                 uiUpdateDeviceInfoTable(props);
                 uiShowPicture(props.picture);
+
+                // Hide binary data from debug log to prevent flooding
                 if (props.picture && props.picture.data)
                     message.result.properties.picture.data.data = '[Binary Data Hidden]';
             }
 
             uiDebugLog(`Properties for device ${message.result.serialNumber}:`);
             uiDebugLog(JSON.stringify(message.result, null, 2));
-
             break;
-        case 'device.get_commands':
+
+        case 'device.get_commands':  // Available device commands  // Available device commands
             if (message.result && message.result.serialNumber === uiGetDeviceSn()) {
                 if (Array.isArray(message.result.commands)) {
+                    // Show/hide UI controls based on device capabilities
                     uiShowVideoButton(message.result.commands.includes('deviceStartLivestream'));
                     uiShowPositionPresetControls(message.result.commands.includes('devicePresetPosition'));
                     uiShowPanTiltControls(message.result.commands.includes('devicePanAndTilt'));
                 }
             }
             break;
-        case 'station.get_properties':
+
+        case 'station.get_properties':  // Station property response
             if (message.result && message.result.properties)
                 uiUpdateStationInfo(message.result.properties);
 
             uiDebugLog(`Properties for station ${message.result.serialNumber}:`);
             uiDebugLog(JSON.stringify(message.result, null, 2));
             break;
-        case 'station.database_query_latest_info':
+
+        case 'station.database_query_latest_info':  // Database query result
+            // Handled via event message 'database query latest'
             break;
-        case 'station.download_image':
+
+        case 'station.download_image':  // Image download result
+            // Handled via event message 'image downloaded'
             break;
-        case 'device.preset_position':
+
+        case 'device.preset_position':  // Preset position command result  // Preset position command result
             if (message.success) {
                 uiChangePositionPresetError(null);
                 uiDebugLog('Preset position command sent successfully.');
@@ -195,8 +304,11 @@ function eufyParseResultMessage(message) {
                 uiDebugLog(`Error sending preset position command. Error: ${message.errorCode}`);
             }
             break;
-        case 'device.pan_and_tilt':
+
+        case 'device.pan_and_tilt':  // Pan/tilt command result
+            // Future implementation for manual pan/tilt control
             break;
+
         default:
             debugConsoleLog('Unknown result messageId:', message.messageId);
             break;
@@ -204,13 +316,14 @@ function eufyParseResultMessage(message) {
 }
 
 /**
- * Handles 'event' messages from the server, such as device or image updates.
- * @param {Object} message - The event message data.
+ * Parse Event Message
+ * Handles real-time events from devices/stations (motion detection, images, etc.)
+ * @param {Object} message - Event message with event type and data
  */
 function eufyParseEventMessage(message) {
     switch (message.event.event) {
-        case 'database query latest': {
-            // cache result for path to device SN mapping
+        case 'database query latest': {  // Latest image metadata from station database
+            // Cache path-to-deviceSn mapping for image download matching
             if (Array.isArray(message.event.data)) {
                 pathToDeviceSnMap = message.event.data.map(d => ({
                     deviceSn: d.device_sn,
@@ -218,11 +331,13 @@ function eufyParseEventMessage(message) {
                 }));
             }
 
+            // Process pending image request if waiting for database query
             if (pendingImageRequest) {
                 console.log('Processing pending image request after database query.');
                 eufyHandleImageDonloadedEvent(pendingImageRequest, true);
                 pendingImageRequest = null;
             } else {
+                // Auto-download latest image for currently selected device
                 console.log('No pending image request to process after database query.');
                 const selectedDeviceSn = uiGetDeviceSn();
                 if (selectedDeviceSn && Array.isArray(message.event.data)) {
@@ -237,53 +352,68 @@ function eufyParseEventMessage(message) {
             }
             break;
         }
-        case 'image downloaded':
+        case 'image downloaded':  // Image binary data received
             eufyHandleImageDonloadedEvent(message.event);
             break;
-        case 'property changed':
+
+        case 'property changed':  // Device/station property update
             switch (message.event.source) {
                 case 'device':
                     switch (message.event.name) {
-                        case 'picture':
+                        case 'picture':  // Device thumbnail updated
                             if (message.event.serialNumber === uiGetDeviceSn())
                                 uiUpdateDevicePicture(message.event.value);
                             break;
-                        case 'wifiRssi':
+                        case 'wifiRssi':  // WiFi signal strength (dBm)
                             uiUpdateDeviceWifiRssi(message.event.serialNumber, message.event.value);
                             break;
-                        case 'wifiSignalLevel':
+                        case 'wifiSignalLevel':  // WiFi signal level (0-4)
                             uiUpdateDeviceWifiSignalLevel(message.event.serialNumber, message.event.value);
                             break;
                     }
                     break;
             }
             break;
-        case 'livestream video data':
-        case 'livestream audio data':
-            // ignore - handled in video.js and transcoding ws
+        case 'livestream video data':  // Raw H.264/H.265 video frames
+        case 'livestream audio data':  // Raw audio frames
+            // Handled by video.js and transcode server WebSocket
             break;
-        case 'motion detected':
-        case 'person detected':
-        case 'stranger detected':
-        case 'sound detected':
-        case 'pet detected':
-        case 'verhicle detected':
+
+        case 'motion detected':     // Motion sensor triggered
+        case 'person detected':     // Person AI detection
+        case 'stranger detected':   // Unknown person detected
+        case 'sound detected':      // Audio detection
+        case 'pet detected':        // Pet AI detection
+        case 'verhicle detected':   // Vehicle AI detection (typo in original API)
+            // Show browser notification on detection event
             if (message.event.state === true)
                 uiSendNotification(`Eufy Event: ${message.event.event}`, `Device SN: ${message.event.serialNumber}`);
             break;
-        case 'command result':
+
+        case 'command result':  // Generic command execution result
+            // Additional processing can be added here
             break;
+
         default:
             debugConsoleLog('Unknown event type:', message.event.event);
             break;
     }
 }
 
+/**
+ * Handle Image Downloaded Event
+ * Matches downloaded image to device and updates UI
+ * Uses cached path-to-device mapping to resolve device SN
+ * @param {Object} event - Image downloaded event with file path and binary data
+ * @param {boolean} isPendingRequest - True if resolving queued request after DB query
+ */
 function eufyHandleImageDonloadedEvent(event, isPendingRequest = false) {
-    // check cached path to device SN mapping, if not found, query database again - but avoid loop!
+    // Match image file path to device using cached mapping
     const mapping = pathToDeviceSnMap.find(m => m.cropLocalPath === event.file);
     if (mapping) {
         pendingImageRequest = null;
+
+        // Update UI only if image belongs to currently selected device
         if (mapping.deviceSn === uiGetDeviceSn()) {
             uiUpdateDevicePicture(event.image);
         } else {
@@ -291,10 +421,13 @@ function eufyHandleImageDonloadedEvent(event, isPendingRequest = false) {
         }
     }
     else {
+        // Mapping not found - query database to refresh cache
         if (isPendingRequest) {
+            // Already tried querying, give up
             debugConsoleLog('Downloaded image does not match the selected device, even after querying latest info.');
             pendingImageRequest = null;
         } else {
+            // Queue request and refresh database cache
             debugConsoleLog('Downloaded image does not match the selected device, querying latest info.');
             pendingImageRequest = event;
             eufyStationDatabaseQueryLatestInfo(stationSn);
@@ -302,8 +435,13 @@ function eufyHandleImageDonloadedEvent(event, isPendingRequest = false) {
     }
 }
 
+// ============================================================================
+// Eufy Command Functions
+// ============================================================================
+
 /**
- * Sends a start_listening command to the server.
+ * Start Listening
+ * Begins receiving events and device/station state from server
  */
 function eufyStartListening() {
     wsSend(JSON.stringify({
@@ -352,8 +490,9 @@ function eufyStationDownloadImage(stationSn, imagePath) {
 }
 
 /**
- * Requests properties for a device.
- * @param {string} deviceSn - The serial number of the device.
+ * Get Device Properties
+ * Requests all properties for a device (name, model, battery, WiFi, capabilities, etc.)
+ * @param {string} deviceSn - Device serial number
  */
 function eufyDeviceGetProperties(deviceSn) {
     wsSend(JSON.stringify({
@@ -366,8 +505,9 @@ function eufyDeviceGetProperties(deviceSn) {
 }
 
 /**
- * Requests available commands for a device.
- * @param {string} deviceSn - The serial number of the device.
+ * Get Device Commands
+ * Requests list of available commands for device (livestream, preset, pan/tilt, etc.)
+ * @param {string} deviceSn - Device serial number
  */
 function eufyDeviceGetCommands(deviceSn) {
     wsSend(JSON.stringify({
@@ -380,9 +520,10 @@ function eufyDeviceGetCommands(deviceSn) {
 }
 
 /**
- * Sends a preset position command to a device.
- * @param {string} deviceSn - The serial number of the device.
- * @param {number} presetNumber - The preset position number.
+ * Execute Preset Position
+ * Moves PTZ camera to saved preset position
+ * @param {string} deviceSn - Device serial number
+ * @param {number} presetNumber - Preset position (1-8)
  */
 function eufyPresetPosition(deviceSn, presetNumber) {
     lastPreset = presetNumber;
@@ -395,7 +536,12 @@ function eufyPresetPosition(deviceSn, presetNumber) {
     uiDebugLog(`Sent preset position ${presetNumber} command to device ${deviceSn}.`);
 }
 
-// Example for future pan/tilt command implementation:
+/**
+ * Pan and Tilt Control
+ * Manual PTZ camera movement control
+ * @param {string} deviceSn - Device serial number
+ * @param {number} panDirection - Direction code (implementation specific)
+ */
 function eufyPanAndTilt(deviceSn, panDirection) {
     wsSend(JSON.stringify({
         messageId: 'device.pan_and_tilt',

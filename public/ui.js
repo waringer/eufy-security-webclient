@@ -1,25 +1,70 @@
-let presetButtons = null;
-let inConfig = false;
+/**
+ * UI Controller Module
+ * 
+ * Manages all user interface interactions, DOM manipulations, and event handlers.
+ * Coordinates between WebSocket client, video player, and REST API.
+ * 
+ * Features:
+ * - Device selection and property display
+ * - Video streaming controls
+ * - PTZ camera controls (presets, pan/tilt)
+ * - Configuration modal
+ * - Browser notifications
+ * - Keyboard shortcuts
+ * - Status indicators and debug logging
+ * 
+ * Dependencies: ws-client.js, video.js, main.js
+ */
 
+// Global UI state
+let presetButtons = null;   // Number of preset position buttons to display
+let inConfig = false;       // True when config modal is open (disables keyboard shortcuts)
+
+// ============================================================================
+// Debug and Initialization
+// ============================================================================
+
+/**
+ * Debug Log to UI
+ * Appends message to debug info panel if debug mode is enabled
+ * @param {string} message - Message to log
+ */
 function uiDebugLog(message) {
     if (debugMode) document.getElementById('info').textContent += message + '\n';
 }
 
-// Initializes the UI and event listeners when the DOM is loaded.
+/**
+ * Initialize UI
+ * Sets up all event listeners and initializes UI components
+ * Called once on DOMContentLoaded from main.js
+ * 
+ * Initializes:
+ * - Info panel visibility (based on debug mode)
+ * - Keyboard shortcuts (arrow keys, numpad)
+ * - Browser notification support check
+ * - Connect/config/notification button handlers
+ * - Status bar collapse/expand toggle
+ * - Device dropdown change handler
+ * - Update device button handler
+ * - Video start/stop button handler
+ */
 function uiInit() {
-    // Hide info panel if debugMode is false
+    // Configure debug info panel visibility
     uiInitInfoPanel(debugMode);
     uiInitKeyboardShortcuts();
     uiCheckNotificationsSupport();
 
+    // Connect button: toggle WebSocket connection
     document.getElementById('connect-btn').onclick = function () {
         wsToggleConnection();
     };
 
+    // Config button: open configuration modal
     document.getElementById('config-btn').onclick = function () {
-        uiOpenConfigModal();
+        restGetConfig(uiOpenConfigModal);
     }
 
+    // Notification button: request browser notification permission
     document.getElementById('notification-btn').onclick = function () {
         uiInitNotifiactions();
     }
@@ -29,41 +74,50 @@ function uiInit() {
         document.getElementById('status').classList.toggle('collapsed');
     });
 
-    // Device dropdown change event
+    // Device dropdown: load device properties on selection change
     const select = document.getElementById('device-select');
     if (select) {
         select.addEventListener('change', function () {
             const deviceSn = select.value;
             if (deviceSn) {
+                // Hide buttons until properties are loaded
                 document.getElementById('device-update-btn').style.display = "none";
                 document.getElementById('device-video-btn').style.display = "none";
                 uiChangePositionPresetError(null);
+
+                // Fetch device properties and available commands
                 eufyDeviceGetProperties(deviceSn);
                 eufyDeviceGetCommands(deviceSn);
             }
         });
     }
 
-    // Update device button event
+    // Update device button: refresh device properties
     document.getElementById('device-update-btn').addEventListener('click', function () {
         document.getElementById('device-select').dispatchEvent(new Event('change'));
     });
 
-    // Video button event
+    // Video button: start/stop livestream
     document.getElementById('device-video-btn').addEventListener('click', function () {
         const videoBtn = document.getElementById('device-video-btn');
 
         if (videoBtn.className === 'connect') {
+            // Start video stream
             uiUpdateDeviceVideo();
             videoStartStream(transcodeServerUrl, document.getElementById('device-select').value);
         } else {
+            // Stop video stream
             videoStopStream();
             document.getElementById('device-select').dispatchEvent(new Event('change'));
         }
     });
 }
 
-// Shows or hides the info panel depending on debugMode.
+/**
+ * Initialize Info Panel
+ * Shows or hides debug info panel based on debug mode
+ * @param {boolean} isEnabled - True to show panel, false to hide
+ */
 function uiInitInfoPanel(isEnabled) {
     const infoPanel = document.getElementById('info');
     const infoDetails = infoPanel.closest('details');
@@ -77,51 +131,64 @@ function uiInitInfoPanel(isEnabled) {
     }
 }
 
+/**
+ * Initialize Keyboard Shortcuts
+ * Sets up keyboard event listeners for PTZ camera control
+ * 
+ * Shortcuts:
+ * - Arrow Keys: Pan/Tilt camera direction
+ * - Home: Return to home position
+ * - Numpad 1-6: Preset positions
+ * 
+ * Disabled when config modal is open
+ */
 function uiInitKeyboardShortcuts() {
     document.addEventListener('keydown', function (event) {
+        // Disable shortcuts when config modal is open
         if (inConfig) return;
+
         switch (event.code) {
-            case 'ArrowUp':
+            case 'ArrowUp':     // Pan up
                 eufyPanAndTilt(uiGetDeviceSn(), 3);
                 event.preventDefault();
                 break;
-            case 'ArrowDown':
+            case 'ArrowDown':   // Pan down
                 eufyPanAndTilt(uiGetDeviceSn(), 4);
                 event.preventDefault();
                 break;
-            case 'ArrowLeft':
+            case 'ArrowLeft':   // Pan left
                 eufyPanAndTilt(uiGetDeviceSn(), 1);
                 event.preventDefault();
                 break;
-            case 'ArrowRight':
+            case 'ArrowRight':  // Pan right
                 eufyPanAndTilt(uiGetDeviceSn(), 2);
                 event.preventDefault();
                 break;
-            case 'Home':
+            case 'Home':        // Start Guard/Patrol Mode
                 eufyPanAndTilt(uiGetDeviceSn(), 0);
                 event.preventDefault();
                 break;
-            case 'Numpad1':
+            case 'Numpad1':     // Preset position 1
                 eufyPresetPosition(uiGetDeviceSn(), 0);
                 event.preventDefault();
                 break;
-            case 'Numpad2':
+            case 'Numpad2':     // Preset position 2
                 eufyPresetPosition(uiGetDeviceSn(), 1);
                 event.preventDefault();
                 break;
-            case 'Numpad3':
+            case 'Numpad3':     // Preset position 3
                 eufyPresetPosition(uiGetDeviceSn(), 2);
                 event.preventDefault();
                 break;
-            case 'Numpad4':
+            case 'Numpad4':     // Preset position 4
                 eufyPresetPosition(uiGetDeviceSn(), 3);
                 event.preventDefault();
                 break;
-            case 'Numpad5':
+            case 'Numpad5':     // Preset position 5
                 eufyPresetPosition(uiGetDeviceSn(), 4);
                 event.preventDefault();
                 break;
-            case 'Numpad6':
+            case 'Numpad6':     // Preset position 6
                 eufyPresetPosition(uiGetDeviceSn(), 5);
                 event.preventDefault();
                 break;
@@ -129,27 +196,38 @@ function uiInitKeyboardShortcuts() {
     });
 }
 
+/**
+ * Check Notifications Support
+ * Checks browser notification support and permission status
+ * Hides notification button if not supported or already granted/denied
+ */
 function uiCheckNotificationsSupport() {
     const notificationBtn = document.getElementById('notification-btn');
+
+    // Check if browser supports notifications API
     if (!("Notification" in window)) {
-        // Browser does not support notifications
         notificationBtn.style.display = 'none';
     }
 
+    // Hide button based on current permission status
     switch (Notification.permission) {
-        case "granted":
+        case "granted":   // User already granted permission
             notificationBtn.style.display = 'none';
             break;
-        case "denied":
+        case "denied":    // User denied permission
             notificationBtn.style.display = 'none';
             break;
-        case "default":
+        case "default":   // Permission not yet requested
             notificationBtn.style.display = 'block';
             break;
     }
 }
 
-// Initializes browser notifications by requesting permission from the user.
+/**
+ * Initialize Notifications
+ * Requests browser notification permission from user
+ * Called when user clicks notification button
+ */
 function uiInitNotifiactions() {
     // Check if browser supports notifications
     if ("Notification" in window) {
@@ -161,12 +239,21 @@ function uiInitNotifiactions() {
                 debugConsoleLog("Notifications permission denied");
             }
 
+            // Update button visibility
             uiCheckNotificationsSupport();
         });
     }
 }
 
-// Resets all UI display fields to their default/empty state.
+// ============================================================================
+// UI State Management
+// ============================================================================
+
+/**
+ * Reset UI
+ * Resets all UI elements to default/empty state
+ * Called on connection lost or disconnect
+ */
 function uiReset() {
     document.getElementById('ws-version').textContent = '';
     document.getElementById('station-sn').textContent = '';
@@ -182,6 +269,12 @@ function uiReset() {
     uiShowConfigButton(!!transcodeConfig);
 }
 
+/**
+ * Send Browser Notification
+ * Shows browser notification if permission is granted
+ * @param {string} title - Notification title
+ * @param {string} body - Notification body text
+ */
 function uiSendNotification(title, body) {
     if (Notification.permission === "granted") {
         new Notification(title, {
@@ -193,24 +286,44 @@ function uiSendNotification(title, body) {
     }
 }
 
-// Updates the Eufy WebSocket version info in the UI.
+// ============================================================================
+// Status and Connection Info Updates
+// ============================================================================
+
+/**
+ * Update Eufy WebSocket Version
+ * Displays client and server version info in status bar
+ * @param {string} clientVersion - eufy-security-client library version
+ * @param {string} serverVersion - eufy-security-ws server version
+ */
 function uiUpdateEufyWSVersion(clientVersion, serverVersion) {
     document.getElementById('ws-version').textContent = `Eufy-Client: ${clientVersion}, Server: ${serverVersion}`;
 };
 
-// Updates the station serial number in the UI.
+/**
+ * Update Station Serial Number
+ * Displays station SN in status bar
+ * @param {string} stationSn - Station serial number or null to clear
+ */
 function uiUpdateStationSn(stationSn) {
     document.getElementById('station-sn').textContent = stationSn ? `Station SN: ${stationSn}` : '';
 }
 
+/**
+ * Update Station Info
+ * Displays detailed station information in status bar
+ * Shows: Name, Model, HW/SW versions, MAC, IP, HDD free space
+ * @param {Object} props - Station properties object
+ */
 function uiUpdateStationInfo(props) {
-    // 2nd status line: Name, Model, Versions, MAC, IP, HDD free
+    // Calculate HDD free space percentage
     let hddFreePercent = '';
     if (props.storageInfoHdd && props.storageInfoHdd.disk_size && props.storageInfoHdd.disk_used) {
         const free = props.storageInfoHdd.disk_size - props.storageInfoHdd.disk_used;
         hddFreePercent = Math.round((free / props.storageInfoHdd.disk_size) * 100);
     }
 
+    // Build status line with station details
     const statusLine2 =
         `Name: ${props.name || ''} | Model: ${props.model || ''} | HW: ${props.hardwareVersion || ''} | SW: ${props.softwareVersion || ''} | ` +
         `MAC: ${props.macAddress || ''} | IP: ${props.lanIpAddress || ''}` +
@@ -219,23 +332,47 @@ function uiUpdateStationInfo(props) {
     document.getElementById('station-version').textContent = statusLine2;
 }
 
-// Updates the connect button's text and class based on connection state.
+/**
+ * Update Connect Button State
+ * Changes button text and style based on WebSocket connection status
+ */
 function uiUpdateConnectButtonState() {
     const connectBtn = document.getElementById('connect-btn');
     const connected = eufyws && eufyws.readyState === WebSocket.OPEN;
 
-    connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
-    connectBtn.className = connected ? 'disconnect' : 'connect';
+    if (connected) {
+        connectBtn.textContent = 'Disconnect';
+        connectBtn.className = 'disconnect';
+    } else {
+        if (isAutoReconnecting) {
+            connectBtn.textContent = 'Reconnecting...';
+            connectBtn.className = 'reconnect';
+        } else {
+            if (eufyws && eufyws.readyState === WebSocket.CONNECTING) {
+                connectBtn.textContent = 'Connecting...';
+                connectBtn.className = 'connecting';
+            } else {
+                connectBtn.textContent = 'Connect';
+                connectBtn.className = 'connect';
+            }
+        }
+    }
 };
 
+/**
+ * Show Config Button
+ * Shows or hides configuration button based on config availability
+ * @param {boolean} show - True to show button, false to hide
+ */
 function uiShowConfigButton(show) {
     document.getElementById('config-btn').style.display = show ? 'block' : 'none';
 }
 
 /**
- * Updates the connection status text and color in the UI.
- * @param {string} text - The status message to display.
- * @param {string} color - The color for the status text.
+ * Update Connection Status
+ * Updates status text and color in UI
+ * @param {string} text - Status message to display
+ * @param {string} color - CSS color for status text (red|orange|darkseagreen|black)
  */
 function uiUpdateStatus(text, color = 'black') {
     const statusEl = document.getElementById('connection-status');
@@ -244,12 +381,50 @@ function uiUpdateStatus(text, color = 'black') {
     statusEl.style.color = color;
 }
 
-// Updates the device info table in the UI.
+// ============================================================================
+// Device Info Display
+// ============================================================================
+
+/**
+ * Update Device Info Table
+ * Replaces device info table with new properties
+ * @param {Object} props - Device properties object
+ */
+/**
+ * Update Device Info Table
+ * Replaces device info table with new properties
+ * @param {Object} props - Device properties object
+ */
 function uiUpdateDeviceInfoTable(props) {
     document.getElementById('device-info').innerHTML = uiMakeDeviceInfoTable(props);
 }
 
-// Creates the HTML for the device info table.
+/**
+ * Make Device Info Table
+ * Generates HTML table from device properties
+ * 
+ * Features:
+ * - XSS protection via HTML escaping
+ * - Boolean values as ✓/✗ icons
+ * - Conditional rows (only show if property exists)
+ * - Formatted sensitivity values (x/5 scale)
+ * - Live-updating WiFi RSSI and signal level
+ * 
+ * Property categories:
+ * - Basic info (name, model, SN, versions)
+ * - WiFi status (RSSI, signal level)
+ * - Device state (enabled, snooze)
+ * - Video/audio settings (quality, nightvision, watermark)
+ * - Motion detection (sensitivity, types, range)
+ * - Detection events (person, pet, vehicle, sound)
+ * - Light settings (brightness, modes, timers)
+ * - Notifications (types, intervals)
+ * - Recording settings (continuous, RTSP)
+ * - Statistics (working days, events)
+ * 
+ * @param {Object} props - Device properties object
+ * @returns {string} HTML table string
+ */
 function uiMakeDeviceInfoTable(props) {
     // Helper to escape HTML special characters to prevent XSS
     function escapeHtml(str) {
@@ -442,10 +617,20 @@ function uiMakeDeviceInfoTable(props) {
     return html;
 }
 
-// Creates the device list dropdown and triggers change event for the first device.
+// ============================================================================
+// Device Selection and Control
+// ============================================================================
+
+/**
+ * Make Device List
+ * Populates device dropdown and auto-selects first device
+ * @param {string[]} devices - Array of device serial numbers
+ */
 function uiMakeDeviceList(devices) {
     const selectContainer = document.getElementById('device-select-container');
     const select = document.getElementById('device-select');
+
+    // Clear and rebuild dropdown options
     select.replaceChildren();
     devices.forEach(dev => {
         const opt = document.createElement('option');
@@ -453,10 +638,11 @@ function uiMakeDeviceList(devices) {
         opt.textContent = dev;
         select.appendChild(opt);
     });
+
     if (devices.length > 0) {
         selectContainer.style.display = 'block ruby';
 
-        // Trigger change event for first device
+        // Auto-select and load first device
         select.selectedIndex = 0;
         select.dispatchEvent(new Event('change'));
     } else {
@@ -464,18 +650,33 @@ function uiMakeDeviceList(devices) {
     }
 }
 
+/**
+ * Lock Device List
+ * Disables device dropdown during video streaming
+ * @param {boolean} lock - True to disable, false to enable
+ */
 function uiLockDeviceList(lock) {
     const select = document.getElementById('device-select');
     select.disabled = lock;
 }
 
+/**
+ * Update Video Button
+ * Changes button text and style based on streaming state
+ * @param {boolean} playing - True if video is streaming
+ */
 function uiUpdateVideoButton(playing) {
     const videoBtn = document.getElementById('device-video-btn');
     videoBtn.textContent = playing ? 'Stop Video' : 'Start Video';
     videoBtn.className = playing ? 'disconnect' : 'connect';
 }
 
-// Updates the device WiFi RSSI value in the UI.
+/**
+ * Update Device WiFi RSSI
+ * Updates live WiFi signal strength for selected device
+ * @param {string} deviceSn - Device serial number
+ * @param {number} rssi - WiFi RSSI value in dBm
+ */
 function uiUpdateDeviceWifiRssi(deviceSn, rssi) {
     const rssiEl = document.getElementById('wifiRssi');
     if (rssiEl && deviceSn === uiGetDeviceSn()) {
@@ -483,7 +684,12 @@ function uiUpdateDeviceWifiRssi(deviceSn, rssi) {
     }
 }
 
-// Updates the device WiFi signal level in the UI.
+/**
+ * Update Device WiFi Signal Level
+ * Updates live WiFi signal level (0-4 scale) for selected device
+ * @param {string} deviceSn - Device serial number
+ * @param {number} signalLevel - WiFi signal level (0-4)
+ */
 function uiUpdateDeviceWifiSignalLevel(deviceSn, signalLevel) {
     const signalEl = document.getElementById('wifiSignalLevel');
     if (signalEl && deviceSn === uiGetDeviceSn()) {
@@ -491,50 +697,157 @@ function uiUpdateDeviceWifiSignalLevel(deviceSn, signalLevel) {
     }
 }
 
-// Shows the device image if available and not streaming.
+// ============================================================================
+// Device Image and Video Display
+// ============================================================================
+
+/**
+ * Cleanup Device Picture
+ * Revokes all blob URLs in device picture container to prevent memory leaks
+ * Should be called before replacing image content
+ */
+function uiCleanupDevicePicture() {
+    const picDiv = document.getElementById('device-picture');
+    const oldImgs = picDiv.querySelectorAll('img');
+    oldImgs.forEach(img => {
+        if (img.src.startsWith('blob:')) {
+            URL.revokeObjectURL(img.src);
+        }
+    });
+}
+
+/**
+ * Extract Event Picture from Existing Blob
+ * Attempts to retrieve existing event image data from DOM for reuse
+ * Checks both flip-card back side and standalone images
+ * @returns {Promise<{data: Array, mime: string}|null>} Event picture object or null if not found
+ */
+async function uiExtractEventPictureFromBlob() {
+    const picDiv = document.getElementById('device-picture');
+
+    // Try to get event image from existing flip card back side OR standalone image
+    let existingEventImg = picDiv.querySelector('.flip-card-back img');
+    if (!existingEventImg) {
+        // No flip card found, try to get standalone event image
+        existingEventImg = picDiv.querySelector('.device-picture-img');
+    }
+
+    if (existingEventImg && existingEventImg.src.startsWith('blob:')) {
+        // Fetch blob data from existing image
+        try {
+            const response = await fetch(existingEventImg.src);
+            const blob = await response.blob();
+            const arrayBuffer = await blob.arrayBuffer();
+            const eventPicture = {
+                data: Array.from(new Uint8Array(arrayBuffer)),
+                mime: blob.type || 'image/jpeg'
+            };
+            debugConsoleLog('Successfully extracted event image from existing blob.');
+            return eventPicture;
+        } catch (e) {
+            debugConsoleLog('Failed to extract event image from blob: ' + e.message);
+            return null;
+        }
+    } else {
+        debugConsoleLog('No existing event image blob found.');
+        return null;
+    }
+}
+
+/**
+ * Show Picture
+ * Displays device picture if available, otherwise requests latest from station
+ * Only updates when video is not streaming
+ * @param {Object} picture - Picture object with binary data
+ */
 function uiShowPicture(picture) {
-    // Show image if available and not streaming
     const videoBtn = document.getElementById('device-video-btn');
+
+    // Only update image when not streaming video
     if (videoBtn.className === 'connect') {
         if (picture) {
             uiUpdateDevicePicture(picture);
         } else {
+            // No picture in properties, request latest from station database
             if (stationSn)
                 eufyStationDatabaseQueryLatestInfo(stationSn);
         }
     }
+
+    // Show update button
     document.getElementById('device-update-btn').style.display = "block";
 }
 
 /**
- * Updates the device image in the UI from a binary message object.
- * @param {Object} message - The image data object.
+ * Update Device Picture
+ * Converts binary image data to blob URL and displays in UI
+ * 
+ * Security:
+ * - XSS protection: only allows safe image MIME types
+ * - Memory management: revokes old blob URLs to prevent leaks
+ * 
+ * @param {Object} message - Image data object with type and binary data
  */
-function uiUpdateDevicePicture(message) {
+async function uiUpdateDevicePicture(message) {
     if (message && message.data.data && Array.isArray(message.data.data)) {
         const videoBtn = document.getElementById('device-video-btn');
+
+        // Only update picture when not streaming video
         if (videoBtn.className === 'connect') {
-            // Only allow safe image mime types to avoid XSS
-            let mime = 'image/jpeg';
-            if (message.type && typeof message.type.mime === 'string') {
-                if (['image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/webp'].includes(message.type.mime.trim().toLowerCase())) {
-                    mime = message.type.mime.trim().toLowerCase();
+            const pictureMime = uiParseMimeType(message.type);
+            const picDiv = document.getElementById('device-picture');
+
+            let eventPicture = null;
+            let eventMime = null;
+            if (message.isSnapshot) {
+                if (!message.eventData) {
+                    debugConsoleLog('Snapshot image received without event data, attempting to extract from existing blob.');
+                    const extracted = await uiExtractEventPictureFromBlob();
+                    if (extracted) {
+                        eventPicture = { data: extracted.data };
+                        eventMime = extracted.mime;
+                    }
+                } else {
+                    eventPicture = message.eventData;
+                    eventMime = uiParseMimeType(message.eventType);
                 }
             }
 
-            const picDiv = document.getElementById('device-picture');
+            // Revoke old blob URLs to prevent memory leak
+            uiCleanupDevicePicture();
 
-            // Revoke old blob URL if exists to prevent memory leak
-            const oldImg = picDiv.querySelector('img');
-            if (oldImg && oldImg.src.startsWith('blob:')) {
-                URL.revokeObjectURL(oldImg.src);
+            if (message.isSnapshot) {
+                if (eventPicture) {
+                    const eventMime = uiParseMimeType(message.eventType);
+                    const flipCard = uiShowSnapshot(message.data, eventPicture, pictureMime, eventMime, message.isRecent === 'event');
+                    picDiv.replaceChildren(flipCard);
+                } else {
+                    // Single snapshot image (no event picture available)
+                    const eventText = document.createElement('div');
+                    eventText.className = 'device-picture-text';
+                    eventText.textContent = 'Snapshot Image';
+
+                    const img = document.createElement('img');
+                    img.src = URL.createObjectURL(new Blob([new Uint8Array(message.data.data)], { type: pictureMime }));
+                    img.alt = 'Snapshot Image';
+                    img.className = 'device-picture-img';
+
+                    picDiv.replaceChildren(eventText, img);
+                }
+            } else {
+                // Single event image (no snapshot available)
+                const eventText = document.createElement('div');
+                eventText.className = 'device-picture-text';
+                eventText.textContent = 'Event Image';
+
+                const img = document.createElement('img');
+                img.src = URL.createObjectURL(new Blob([new Uint8Array(message.data.data)], { type: pictureMime }));
+                img.alt = 'Event Image';
+                img.className = 'device-picture-img';
+
+                picDiv.replaceChildren(eventText, img);
             }
 
-            const img = document.createElement('img');
-            img.src = URL.createObjectURL(new Blob([new Uint8Array(message.data.data)], { type: mime }));
-            img.alt = 'Device image';
-            img.className = 'device-picture-img';
-            picDiv.replaceChildren(img);
         } else {
             // Skip picture update while video is streaming
             debugConsoleLog('Skipping picture update while video is streaming.');
@@ -542,15 +855,120 @@ function uiUpdateDevicePicture(message) {
     }
 }
 
-// Updates the device video element in the UI.
+/**
+ * Parse MIME Type
+ * Validates and returns safe image MIME type from type object
+ * 
+ * Security:
+ * - Whitelist validation to prevent XSS attacks
+ * - Falls back to 'image/jpeg' if type is invalid or unsafe
+ * 
+ * @param {Object} type - Type object with mime property
+ * @returns {string} Safe MIME type string (e.g., 'image/jpeg')
+ */
+function uiParseMimeType(type) {
+    // Whitelist safe image MIME types to prevent XSS
+    let mime = 'image/jpeg';
+    if (type && typeof type.mime === 'string') {
+        const safeMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/webp'];
+        if (safeMimes.includes(type.mime.trim().toLowerCase())) {
+            mime = type.mime.trim().toLowerCase();
+        }
+    }
+    return mime;
+}
+
+/**
+ * Show Snapshot with Flip Card
+ * Creates interactive flip card UI element displaying snapshot and event images
+ * 
+ * Features:
+ * - 3D flip animation on click
+ * - Front side: Video snapshot
+ * - Back side: Event image
+ * - Converts binary data to blob URLs for display
+ * 
+ * @param {Object} picture - Snapshot image data object with data array
+ * @param {Object} eventData - Event image data object with data array
+ * @param {string} pictureType - MIME type for snapshot image
+ * @param {string} eventType - MIME type for event image
+ * @returns {HTMLElement} Flip card container element ready to append to DOM
+ */
+function uiShowSnapshot(picture, eventData, pictureType, eventType, isPictureRecent = false) {
+    // Create flip card container for snapshot + event image
+    const flipCard = document.createElement('div');
+    flipCard.className = 'flip-card';
+
+    const flipCardInner = document.createElement('div');
+    flipCardInner.className = 'flip-card-inner';
+
+    // Front side: Video Snapshot
+    const flipCardFront = document.createElement('div');
+    flipCardFront.className = 'flip-card-front';
+
+    const snapshotText = document.createElement('div');
+    snapshotText.className = 'device-picture-text';
+    snapshotText.textContent = 'Video Snapshot';
+
+    const snapshotImg = document.createElement('img');
+    snapshotImg.src = URL.createObjectURL(new Blob([new Uint8Array(picture.data)], { type: pictureType }));
+    snapshotImg.alt = 'Video Snapshot';
+    snapshotImg.className = 'device-picture-img';
+
+    flipCardFront.appendChild(snapshotText);
+    flipCardFront.appendChild(snapshotImg);
+
+    // Back side: Event Image
+    const flipCardBack = document.createElement('div');
+    flipCardBack.className = 'flip-card-back';
+
+    const eventText = document.createElement('div');
+    eventText.className = 'device-picture-text';
+    eventText.textContent = 'Event Image';
+
+    const eventImg = document.createElement('img');
+    eventImg.src = URL.createObjectURL(new Blob([new Uint8Array(eventData.data)], { type: eventType }));
+    eventImg.alt = 'Event Image';
+    eventImg.className = 'device-picture-img';
+
+    flipCardBack.appendChild(eventText);
+    flipCardBack.appendChild(eventImg);
+
+    // Assemble flip card
+    flipCardInner.appendChild(flipCardFront);
+    flipCardInner.appendChild(flipCardBack);
+    flipCard.appendChild(flipCardInner);
+
+    // Click handler to flip card
+    flipCard.addEventListener('click', function () {
+        flipCardInner.classList.toggle('flipped');
+    });
+
+    if (isPictureRecent) {
+        flipCardInner.classList.toggle('flipped');
+    }
+
+    return flipCard;
+}
+
+/**
+ * Update Device Video
+ * Creates video element with buffer display for livestream playback
+ * Replaces static image with video player interface
+ */
 function uiUpdateDeviceVideo() {
     const picDiv = document.getElementById('device-picture');
 
+    // Revoke old blob URLs to prevent memory leak
+    uiCleanupDevicePicture();
+
+    // Create video element with controls
     const video = document.createElement('video');
     video.id = 'device-video-video';
     video.controls = true;
     video.autoplay = true;
 
+    // Create buffer size display
     const p = document.createElement('p');
     const strong = document.createElement('strong');
     strong.textContent = 'Buffer:';
@@ -560,33 +978,52 @@ function uiUpdateDeviceVideo() {
     p.appendChild(strong);
     p.appendChild(bufferSpan);
 
+    // Create error message overlay
     const errorDiv = document.createElement('div');
     errorDiv.id = 'device-video-errorMessage';
 
+    // Replace image with video player interface
     picDiv.replaceChildren(video, p, errorDiv);
 }
 
-// Shows or hides the video button.
+// ============================================================================
+// PTZ Camera Controls
+// ============================================================================
+
+/**
+ * Show Video Button
+ * Shows or hides livestream start/stop button
+ * @param {boolean} show - True to show button, false to hide
+ */
 function uiShowVideoButton(show) {
     document.getElementById('device-video-btn').style.display = show ? 'block' : 'none';
 }
 
-// Shows or hides the position preset controls and creates preset buttons.
+/**
+ * Show Position Preset Controls
+ * Creates and displays preset position buttons for PTZ camera
+ * Button count is determined by global presetButtons variable
+ * @param {boolean} show - True to show controls, false to hide
+ */
 function uiShowPositionPresetControls(show) {
     const presetsContainer = document.getElementById('device-presets');
     presetsContainer.style.display = show ? 'grid' : 'none';
+
     if (show) {
+        // Add label
         const span = document.createElement('span');
         span.className = 'preset-label';
         span.textContent = 'Pos:';
         presetsContainer.replaceChildren(span);
 
+        // Create preset buttons (typically 4-8 positions)
         for (let i = 0; i < presetButtons; i++) {
             const btn = document.createElement('button');
             btn.value = i;
-            btn.textContent = i + 1;
+            btn.textContent = i + 1;  // Display 1-based numbering
             btn.className = 'preset-btn';
 
+            // Execute preset position on click
             btn.addEventListener('click', function () {
                 const deviceSn = uiGetDeviceSn();
                 if (deviceSn && btn.value) {
@@ -599,7 +1036,11 @@ function uiShowPositionPresetControls(show) {
     }
 }
 
-// Changes the error state of the last position preset button.
+/**
+ * Change Position Preset Error
+ * Updates visual state of preset button to show success/error
+ * @param {string|null} errorMessage - Error message to display as tooltip, or null for success
+ */
 function uiChangePositionPresetError(errorMessage) {
     const isError = !!errorMessage;
     const btn = document.querySelector(`.preset-btn[value="${lastPreset}"]`);
@@ -609,81 +1050,114 @@ function uiChangePositionPresetError(errorMessage) {
     }
 }
 
-// Shows or hides the pan/tilt controls (not yet implemented).
+/**
+ * Show Pan/Tilt Controls
+ * Future implementation for manual pan/tilt direction controls
+ * @param {boolean} show - True to show controls, false to hide
+ */
 function uiShowPanTiltControls(show) {
     // TODO: implement pan/tilt controls UI
     // document.getElementById('device-pan-tilt-controls').style.display = show ? 'block' : 'none';
 }
 
-// Gets the currently selected device serial number from the dropdown.
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Get Device Serial Number
+ * Returns currently selected device SN from dropdown
+ * @returns {string|null} Device serial number or null
+ */
 function uiGetDeviceSn() {
     const select = document.getElementById('device-select');
     return select ? select.value : null;
 }
 
-// Opens the configuration modal and populates it with current config values
-function uiOpenConfigModal() {
-    if (!transcodeConfig) {
+// ============================================================================
+// Configuration Modal
+// ============================================================================
+
+/**
+ * Open Configuration Modal
+ * Displays configuration modal with current settings
+ * 
+ * Configurable settings:
+ * - Eufy account (username, password, country, language)
+ * - Video scaling resolution
+ * - FFmpeg transcoding preset (ultrafast, veryfast, fast, medium)
+ * - FFmpeg CRF quality (0-51, lower = better quality)
+ * - FFmpeg thread count
+ * - Short keyframe intervals (for lower latency)
+ * 
+ * @param {Object} config - Current configuration object
+ */
+function uiOpenConfigModal(config) {
+    if (!config) {
         uiShowConfigButton(false);
         alert('Configuration not available');
         return;
     }
 
-    // Populate modal fields with current config
-    document.getElementById('config-eufy-username').value = transcodeConfig.EUFY_CONFIG?.username || '';
-    document.getElementById('config-eufy-password').value = transcodeConfig.EUFY_CONFIG?.password || '';
-    document.getElementById('config-eufy-country').value = transcodeConfig.EUFY_CONFIG?.country || 'DE';
-    document.getElementById('config-eufy-language').value = transcodeConfig.EUFY_CONFIG?.language || 'en';
-    document.getElementById('config-video-scale').value = transcodeConfig.VIDEO_SCALE || '';
-    document.getElementById('config-transcoding-preset').value = transcodeConfig.TRANSCODING_PRESET || 'ultrafast';
-    document.getElementById('config-transcoding-crf').value = transcodeConfig.TRANSCODING_CRF || '';
-    document.getElementById('config-ffmpeg-threads').value = transcodeConfig.FFMPEG_THREADS || '';
-    document.getElementById('config-short-keyframes').checked = transcodeConfig.FFMPEG_SHORT_KEYFRAMES || false;
+    // Populate modal form fields with current configuration
+    document.getElementById('config-eufy-username').value = config.EUFY_CONFIG?.username || '';
+    document.getElementById('config-eufy-password').value = config.EUFY_CONFIG?.password || '';
+    document.getElementById('config-eufy-country').value = config.EUFY_CONFIG?.country || 'DE';
+    document.getElementById('config-eufy-language').value = config.EUFY_CONFIG?.language || 'en';
+    document.getElementById('config-video-scale').value = config.VIDEO_SCALE || '';
+    document.getElementById('config-transcoding-preset').value = config.TRANSCODING_PRESET || 'ultrafast';
+    document.getElementById('config-transcoding-crf').value = config.TRANSCODING_CRF || '';
+    document.getElementById('config-ffmpeg-threads').value = config.FFMPEG_THREADS || '';
+    document.getElementById('config-short-keyframes').checked = config.FFMPEG_SHORT_KEYFRAMES || false;
 
-    // Show modal
+    // Display modal
     const modal = document.getElementById('config-modal');
     modal.classList.add('show');
-    inConfig = true;
+    inConfig = true;  // Disable keyboard shortcuts
 
-    // Setup password toggle
+    // Setup password visibility toggle
     const passwordToggleBtn = document.getElementById('password-toggle-btn');
     const passwordInput = document.getElementById('config-eufy-password');
 
     passwordToggleBtn.onclick = () => {
         if (passwordInput.type === 'password') {
             passwordInput.type = 'text';
-            passwordToggleBtn.textContent = '🙈';
+            passwordToggleBtn.textContent = '🙈';  // Hide password icon
         } else {
             passwordInput.type = 'password';
-            passwordToggleBtn.textContent = '👁';
+            passwordToggleBtn.textContent = '👁';   // Show password icon
         }
     };
 
-    // Setup event listeners
+    // Setup modal event listeners
     const closeBtn = modal.querySelector('.modal-close');
     const cancelBtn = document.getElementById('config-cancel-btn');
     const saveBtn = document.getElementById('config-save-btn');
 
+    // Close modal helper
     const closeModal = () => {
         modal.classList.remove('show');
-        inConfig = false;
+        inConfig = false;  // Re-enable keyboard shortcuts
+
         // Reset password field type
         passwordInput.type = 'password';
         passwordToggleBtn.textContent = '👁';
     };
 
+    // Close button handler
     closeBtn.onclick = closeModal;
     cancelBtn.onclick = closeModal;
 
-    // Close modal when clicking outside
+    // Close modal when clicking outside content area
     modal.onclick = (e) => {
         if (e.target === modal) {
             closeModal();
         }
     };
 
-    // Save configuration
+    // Save configuration handler
     saveBtn.onclick = () => {
+        // Build new configuration object from form inputs
         const newConfig = {
             EUFY_CONFIG: {
                 username: document.getElementById('config-eufy-username').value,
@@ -698,6 +1172,7 @@ function uiOpenConfigModal() {
             FFMPEG_SHORT_KEYFRAMES: document.getElementById('config-short-keyframes').checked
         };
 
+        // Send updated config to server
         const err = restPostConfig(newConfig);
         if (err) {
             alert('Error saving configuration: ' + err);

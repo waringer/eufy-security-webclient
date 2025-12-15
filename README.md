@@ -4,10 +4,13 @@ A web-based client and video transcoding server using [eufy-security-client](htt
 
 ## Features
 - **Live video streaming** from Eufy cameras with H.265 to H.264/AAC transcoding (supports both H.265 and H.264 streams)
+- **Automatic snapshot extraction** from video stream with adaptive keyframe detection
 - **Device selection and control** via intuitive web UI
 - **Fast, low-latency playback** using Media Source Extensions (MSE)
+- **Auto-reconnect** for WebSocket connections with visual countdown
 - **Keyboard shortcuts** for PTZ control and camera presets
 - **Real-time notifications** for motion detection and person detection events
+- **Smart picture update detection** with hash-based change tracking
 - **Dynamic transcoding configuration** via REST API and web UI
 - **Health check endpoint** for monitoring server status
 - **Docker support** for easy deployment
@@ -26,7 +29,7 @@ eufy-security-webclient/
 │   └── favicon.ico       # Favicon
 ├── server/                # Server-side modules
 │   ├── eufy-client.js    # Eufy Security Client integration
-│   ├── transcode.js      # FFmpeg transcoding logic
+│   ├── transcode.js      # FFmpeg transcoding and snapshot extraction
 │   ├── ws-api.js         # WebSocket API server
 │   ├── rest.js           # REST API and HTTP server
 │   └── utils.js          # Utility functions and configuration
@@ -158,6 +161,13 @@ This allows you to:
 
 The stream will start automatically when accessed and uses fMP4 format with H.264 video and AAC audio.
 
+### Automatic Snapshots
+The server automatically extracts high-quality JPEG snapshots from the video stream:
+- Uses **adaptive keyframe detection** to identify I-frames with best quality
+- Snapshots are saved to `data/snapshots/<SERIAL_NUMBER>.jpg`
+- Automatically updated whenever a device is streaming
+- Available for all WebSocket clients via picture property updates
+
 ### Notifications
 The web client displays real-time notifications for:
 - **Motion detection events**
@@ -234,6 +244,7 @@ All code, comments, and variables are in English. The UI labels and messages are
 - Check server logs for authentication errors
 - Ensure port 3001 is not blocked by firewall
 - For 2FA-enabled accounts, you may need to disable 2FA temporarily or use app-specific passwords
+- WebSocket connections automatically reconnect after 5 seconds if disconnected unexpectedly
 
 ### Performance issues
 - Adjust TRANSCODING_PRESET to a faster preset (e.g., `superfast` or `ultrafast`)
