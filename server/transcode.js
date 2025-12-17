@@ -189,8 +189,6 @@ function startTranscoding() {
 
         // Audio encoding settings
         '-c:a', 'aac',                     // AAC audio codec
-        '-b:a', '48k',                     // Audio bitrate
-        '-ar', '16000',                    // Sample rate
         '-ac', '1',                        // Mono audio
 
         // fMP4 container configuration for live streaming

@@ -4,11 +4,15 @@
 <head>
     <meta charset="UTF-8">
     <title>Eufy Security WebSocket Client</title>
-    <link rel="stylesheet" href="index.css">
-    <script src="main.js"></script>
-    <script src="ui.js"></script>
-    <script src="ws-client.js"></script>
-    <script src="video.js"></script>
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="css/styles.css">
+    <link id="theme-link" rel="stylesheet" href="css/dark-theme.css">
+    <!-- Scripts -->
+    <script src="js/theme-switcher.js"></script>
+    <script src="js/main.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/ws-client.js"></script>
+    <script src="js/video.js"></script>
 </head>
 
 <body>
@@ -17,6 +21,7 @@
         <button id="config-btn" title="Configuration">⚙</button>
         <button id="notification-btn">Activate Notifications</button>
         <button id="connect-btn">Connect</button>
+        <button id="theme-toggle-btn" title="Switch theme">🔆</button>
     </div>
     <div id="device-select-container">
         <label for="device-select">Select device:</label>

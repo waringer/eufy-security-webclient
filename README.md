@@ -6,6 +6,7 @@ A web-based client and video transcoding server using [eufy-security-client](htt
 - **Live video streaming** from Eufy cameras with H.265 to H.264/AAC transcoding (supports both H.265 and H.264 streams)
 - **Automatic snapshot extraction** from video stream with adaptive keyframe detection
 - **Device selection and control** via intuitive web UI
+- **Theme switcher** with light and dark mode support (persisted in browser)
 - **Fast, low-latency playback** using Media Source Extensions (MSE)
 - **Auto-reconnect** for WebSocket connections with visual countdown
 - **Keyboard shortcuts** for PTZ control and camera presets
@@ -20,12 +21,17 @@ A web-based client and video transcoding server using [eufy-security-client](htt
 ```
 eufy-security-webclient/
 ├── public/                # Static web UI files
+│   ├── css/              # Stylesheets
+│   │   ├── styles.css        # Base styles with CSS variables
+│   │   ├── dark-theme.css    # Dark theme colors
+│   │   └── light-theme.css   # Light theme colors
+│   ├── js/               # Client-side JavaScript
+│   │   ├── main.js           # Application initialization
+│   │   ├── ui.js             # UI event handling and DOM manipulation
+│   │   ├── video.js          # Video player and MSE logic
+│   │   ├── ws-client.js      # WebSocket client communication
+│   │   └── theme-switcher.js # Theme switching logic
 │   ├── index.html        # Main HTML UI
-│   ├── index.css         # UI styles
-│   ├── main.js           # Application initialization
-│   ├── ui.js             # UI event handling and DOM manipulation
-│   ├── video.js          # Video player and MSE logic
-│   ├── ws-client.js      # WebSocket client communication
 │   └── favicon.ico       # Favicon
 ├── server/                # Server-side modules
 │   ├── eufy-client.js    # Eufy Security Client integration
@@ -145,6 +151,7 @@ You can set these in your `docker-compose.yml`, Docker run command, or as enviro
 3. Click "Start Video" to begin streaming
 4. Use the control buttons or keyboard shortcuts for PTZ and presets
 5. Click "Config" to adjust transcoding settings in real-time (if available)
+6. Use the theme toggle button (🔆/🌙) to switch between light and dark mode
 
 **Note**: Device selection is locked while video is streaming to prevent conflicts. Stop the video before switching devices.
 
@@ -201,7 +208,7 @@ See [server/ws-api.js](server/ws-api.js) for the complete API specification.
 ## Development
 
 ### Debug Mode
-Enable client debug mode by setting `debugMode = true` at the top of `public/main.js` to see detailed console logs and additional debug information in the UI. For the server, set or change the `LOGGINGLEVEL` environment variable.
+Enable client debug mode by setting `debugMode = true` at the top of `public/js/main.js` to see detailed console logs and additional debug information in the UI. For the server, set or change the `LOGGINGLEVEL` environment variable.
 
 ### Architecture
 The project follows a modular architecture:
@@ -215,11 +222,15 @@ The project follows a modular architecture:
 - **server/utils.js**: Configuration management and logging utilities
 
 **Frontend (Browser):**
-- **main.js**: Application initialization and configuration
-- **ui.js**: UI event handlers and DOM manipulation
-- **video.js**: Video player implementation using Media Source Extensions (MSE)
-- **ws-client.js**: WebSocket client for server communication
-- **index.html/css**: UI structure and styling
+- **js/main.js**: Application initialization and configuration
+- **js/ui.js**: UI event handlers and DOM manipulation
+- **js/video.js**: Video player implementation using Media Source Extensions (MSE)
+- **js/ws-client.js**: WebSocket client for server communication
+- **js/theme-switcher.js**: Theme switching logic with localStorage persistence
+- **css/styles.css**: Base styles with CSS variables
+- **css/dark-theme.css**: Dark theme color scheme
+- **css/light-theme.css**: Light theme color scheme
+- **index.html**: UI structure
 
 All code, comments, and variables are in English. The UI labels and messages are also in English by default.
 

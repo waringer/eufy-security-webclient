@@ -53,6 +53,7 @@ function uiInit() {
     uiInitInfoPanel(debugMode);
     uiInitKeyboardShortcuts();
     uiCheckNotificationsSupport();
+    themeInit();
 
     // Connect button: toggle WebSocket connection
     document.getElementById('connect-btn').onclick = function () {

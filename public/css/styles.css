@@ -1,14 +1,60 @@
-/* ========== Root Variables ========== */
+/* ========== Root Variables - Theme Colors ========== */
 :root {
     --info-height-diff: 250px;
+
+    /* Background & Text Colors */
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #2a2a2a;
+    --bg-tertiary: #252525;
+    --text-primary: #e0e0e0;
+    --text-secondary: #aaa;
+    --text-tertiary: #999;
+
+    /* Border & Accent Colors */
+    --border-color: #555;
+    --border-light: #444;
+    --accent-color: #4db8ff;
+    --accent-hover: #3da8ef;
+
+    /* Button Colors */
+    --button-bg: #3a3a3a;
+    --button-bg-hover: #4a4a4a;
+    --button-bg-active: #2a2a2a;
+    --button-text: #e0e0e0;
+
+    /* Select/Input Colors */
+    --input-bg: #1a1a1a;
+    --input-text: #e0e0e0;
+
+    /* Table Colors */
+    --table-bg: #2a2a2a;
+    --table-border: #444;
+    --table-label-bg: #252525;
+    --table-label-text: #aaa;
+    --table-hover: #333;
+
+    /* Modal Colors */
+    --modal-bg: #2a2a2a;
+    --modal-overlay: rgba(0, 0, 0, 0.7);
+    --modal-border: #555;
+    --modal-header-border: #444;
+
+    /* Status Bar Colors */
+    --status-bg: #2a2a2a;
+    --status-border: #444;
+    --status-text: #aaa;
+
+    /* Shadow Colors */
+    --shadow-dark: rgba(0, 0, 0, 0.3);
+    --shadow-light: rgba(0, 0, 0, 0.5);
 }
 
 /* ========== Layout & Body ========== */
 body {
     font-family: Arial, sans-serif;
     margin: 2em;
-    background-color: #1a1a1a;
-    color: #e0e0e0;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
 }
 
 /* ========== Header Bar ========== */
@@ -48,18 +94,26 @@ h1 {
     font-size: 1em;
 }
 
+/* ========== Theme Switcher Styles ========== */
+#theme-toggle-btn {
+    font-size: 1.2em;
+    padding: 0.4em 0.6em;
+    line-height: 1;
+    margin-left: 0.5em;
+}
+
 /* ========== Status Bar ========== */
 #status {
     position: fixed;
     left: 0;
     right: 0;
     bottom: 0;
-    background: #2a2a2a;
-    border-top: 1px solid #444;
+    background: var(--status-bg);
+    border-top: 1px solid var(--status-border);
     padding: 0.5em 0 0.5em 2em;
     z-index: 100;
     font-size: 1em;
-    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 -2px 8px var(--shadow-dark);
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -78,7 +132,7 @@ h1 {
     font-size: 1.5em;
     cursor: pointer;
     padding: 0 0.5em;
-    color: #aaa;
+    color: var(--text-secondary);
     transition: transform 0.2s;
     outline: none;
     flex: 0 0 auto;
@@ -108,7 +162,7 @@ h1 {
 #status-line1,
 #status-line2 {
     font-size: 0.95em;
-    color: #aaa;
+    color: var(--text-secondary);
     margin-top: 0.2em;
 }
 
@@ -118,11 +172,11 @@ h1 {
 }
 
 #status span#ws-version {
-    color: #999;
+    color: var(--text-tertiary);
 }
 
 #status span#station-sn {
-    color: #4db8ff;
+    color: var(--accent-color);
     display: inline-block;
     width: 250px;
 }
@@ -165,13 +219,13 @@ h1 {
 }
 
 #device-info {
-    color: #e0e0e0;
+    color: var(--text-primary);
     flex: auto;
     min-width: 300px;
     max-width: 500px;
     max-height: calc(100vh - var(--info-height-diff));
     overflow-y: auto;
-    border: 1px solid #555;
+    border: 1px solid var(--border-color);
 }
 
 .device-picture-text {
@@ -213,7 +267,7 @@ h1 {
     position: relative;
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
-    background-color: #1a1a1a;
+    background-color: var(--bg-primary);
 }
 
 .flip-card-back {
@@ -235,17 +289,17 @@ h1 {
 }
 
 pre {
-    background: #2a2a2a;
+    background: var(--bg-secondary);
     padding: 1em;
     border-radius: 5px;
-    border: 1px solid #444;
-    color: #e0e0e0;
+    border: 1px solid var(--border-light);
+    color: var(--text-primary);
 }
 
 .info-details summary {
     font-weight: bold;
     cursor: pointer;
-    color: #e0e0e0;
+    color: var(--text-primary);
 }
 
 .info-details pre {
@@ -270,9 +324,9 @@ pre {
 /* ========== Form Elements ========== */
 button {
     margin-right: 1em;
-    background-color: #3a3a3a;
-    color: #e0e0e0;
-    border: 1px solid #555;
+    background-color: var(--button-bg);
+    color: var(--button-text);
+    border: 1px solid var(--border-color);
     padding: 0.5em 1em;
     border-radius: 4px;
     cursor: pointer;
@@ -280,28 +334,28 @@ button {
 }
 
 button:hover {
-    background-color: #4a4a4a;
+    background-color: var(--button-bg-hover);
 }
 
 button:active {
-    background-color: #2a2a2a;
+    background-color: var(--button-bg-active);
 }
 
 select {
-    background-color: #2a2a2a;
-    color: #e0e0e0;
-    border: 1px solid #555;
+    background-color: var(--bg-secondary);
+    color: var(--button-text);
+    border: 1px solid var(--border-color);
     padding: 0.5em;
     border-radius: 4px;
 }
 
 select:focus {
     outline: none;
-    border-color: #4db8ff;
+    border-color: var(--accent-color);
 }
 
 label {
-    color: #e0e0e0;
+    color: var(--text-primary);
 }
 
 span.true {
@@ -320,14 +374,14 @@ span.false {
     border-collapse: collapse;
     font-family: Arial, sans-serif;
     font-size: 14px;
-    background-color: #2a2a2a;
-    border: 1px solid #444;
+    background-color: var(--table-bg);
+    border: 1px solid var(--table-border);
     border-radius: 5px;
     overflow: hidden;
 }
 
 .device-info-table tbody tr {
-    border-bottom: 1px solid #444;
+    border-bottom: 1px solid var(--table-border);
 }
 
 .device-info-table tbody tr:last-child {
@@ -335,7 +389,7 @@ span.false {
 }
 
 .device-info-table tbody tr:hover {
-    background-color: #333;
+    background-color: var(--table-hover);
 }
 
 .device-info-table td {
@@ -344,13 +398,13 @@ span.false {
 
 .device-info-table td.label {
     font-weight: 600;
-    color: #aaa;
+    color: var(--table-label-text);
     width: 40%;
-    background-color: #252525;
+    background-color: var(--table-label-bg);
 }
 
 .device-info-table td.value {
-    color: #e0e0e0;
+    color: var(--text-primary);
     width: 60%;
 }
 
@@ -363,7 +417,7 @@ span.false {
     top: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.7);
+    background-color: var(--modal-overlay);
     overflow: auto;
 }
 
@@ -374,12 +428,12 @@ span.false {
 }
 
 .modal-content {
-    background-color: #2a2a2a;
-    border: 1px solid #555;
+    background-color: var(--modal-bg);
+    border: 1px solid var(--modal-border);
     border-radius: 8px;
     width: 90%;
     max-width: 600px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 20px var(--shadow-light);
 }
 
 .modal-header {
@@ -387,17 +441,17 @@ span.false {
     justify-content: space-between;
     align-items: center;
     padding: 1em 1.5em;
-    border-bottom: 1px solid #444;
+    border-bottom: 1px solid var(--modal-header-border);
 }
 
 .modal-header h2 {
     margin: 0;
-    color: #e0e0e0;
+    color: var(--text-primary);
 }
 
 .modal-close {
     font-size: 2em;
-    color: #aaa;
+    color: var(--text-secondary);
     cursor: pointer;
     line-height: 1;
     transition: color 0.2s;
@@ -419,7 +473,7 @@ span.false {
     display: block;
     margin-bottom: 0.5em;
     font-weight: 600;
-    color: #e0e0e0;
+    color: var(--text-primary);
 }
 
 .config-field input[type="text"],
@@ -428,9 +482,9 @@ span.false {
 .config-field select {
     width: 100%;
     padding: 0.6em;
-    background-color: #1a1a1a;
-    color: #e0e0e0;
-    border: 1px solid #555;
+    background-color: var(--input-bg);
+    color: var(--input-text);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     font-size: 1em;
 }
@@ -440,7 +494,7 @@ span.false {
 .config-field input[type="number"]:focus,
 .config-field select:focus {
     outline: none;
-    border-color: #4db8ff;
+    border-color: var(--accent-color);
 }
 
 .config-field input[type="checkbox"] {
@@ -461,9 +515,9 @@ span.false {
     width: 100%;
     padding: 0.6em;
     padding-right: 2.5em;
-    background-color: #1a1a1a;
-    color: #e0e0e0;
-    border: 1px solid #555;
+    background-color: var(--input-bg);
+    color: var(--input-text);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     font-size: 1em;
 }
@@ -471,7 +525,7 @@ span.false {
 .password-input-wrapper input[type="password"]:focus,
 .password-input-wrapper input[type="text"]:focus {
     outline: none;
-    border-color: #4db8ff;
+    border-color: var(--accent-color);
 }
 
 .password-toggle {
@@ -482,12 +536,12 @@ span.false {
     font-size: 1.2em;
     cursor: pointer;
     padding: 0.3em;
-    color: #aaa;
+    color: var(--text-secondary);
     transition: color 0.2s;
 }
 
 .password-toggle:hover {
-    color: #4db8ff;
+    color: var(--accent-color);
 }
 
 .modal-footer {
@@ -495,7 +549,7 @@ span.false {
     justify-content: flex-end;
     gap: 1em;
     padding: 1em 1.5em;
-    border-top: 1px solid #444;
+    border-top: 1px solid var(--modal-header-border);
 }
 
 .modal-footer button {
@@ -504,10 +558,10 @@ span.false {
 }
 
 #config-save-btn {
-    background-color: #4db8ff;
-    border-color: #4db8ff;
+    background-color: var(--accent-color);
+    border-color: var(--accent-color);
 }
 
 #config-save-btn:hover {
-    background-color: #3da8ef;
+    background-color: var(--accent-hover);
 }

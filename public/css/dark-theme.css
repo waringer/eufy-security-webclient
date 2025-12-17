@@ -1,0 +1,48 @@
+/* ========== Dark Theme Colors ========== */
+:root {
+    /* Background & Text Colors */
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #2a2a2a;
+    --bg-tertiary: #252525;
+    --text-primary: #e0e0e0;
+    --text-secondary: #aaa;
+    --text-tertiary: #999;
+
+    /* Border & Accent Colors */
+    --border-color: #555;
+    --border-light: #444;
+    --accent-color: #4db8ff;
+    --accent-hover: #3da8ef;
+
+    /* Button Colors */
+    --button-bg: #3a3a3a;
+    --button-bg-hover: #4a4a4a;
+    --button-bg-active: #2a2a2a;
+    --button-text: #e0e0e0;
+
+    /* Select/Input Colors */
+    --input-bg: #1a1a1a;
+    --input-text: #e0e0e0;
+
+    /* Table Colors */
+    --table-bg: #2a2a2a;
+    --table-border: #444;
+    --table-label-bg: #252525;
+    --table-label-text: #aaa;
+    --table-hover: #333;
+
+    /* Modal Colors */
+    --modal-bg: #2a2a2a;
+    --modal-overlay: rgba(0, 0, 0, 0.7);
+    --modal-border: #555;
+    --modal-header-border: #444;
+
+    /* Status Bar Colors */
+    --status-bg: #2a2a2a;
+    --status-border: #444;
+    --status-text: #aaa;
+
+    /* Shadow Colors */
+    --shadow-dark: rgba(0, 0, 0, 0.3);
+    --shadow-light: rgba(0, 0, 0, 0.5);
+}

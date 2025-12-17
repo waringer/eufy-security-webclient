@@ -1,0 +1,48 @@
+/* ========== Light Theme Colors ========== */
+:root {
+    /* Background & Text Colors */
+    --bg-primary: #f5f5f5;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #f0f0f0;
+    --text-primary: #333333;
+    --text-secondary: #555555;
+    --text-tertiary: #666666;
+
+    /* Border & Accent Colors */
+    --border-color: #cccccc;
+    --border-light: #dddddd;
+    --accent-color: #0066cc;
+    --accent-hover: #0052a3;
+
+    /* Button Colors */
+    --button-bg: #f0f0f0;
+    --button-bg-hover: #e0e0e0;
+    --button-bg-active: #d0d0d0;
+    --button-text: #333333;
+
+    /* Select/Input Colors */
+    --input-bg: #ffffff;
+    --input-text: #333333;
+
+    /* Table Colors */
+    --table-bg: #ffffff;
+    --table-border: #eeeeee;
+    --table-label-bg: #f5f5f5;
+    --table-label-text: #555555;
+    --table-hover: #f9f9f9;
+
+    /* Modal Colors */
+    --modal-bg: #ffffff;
+    --modal-overlay: rgba(0, 0, 0, 0.3);
+    --modal-border: #cccccc;
+    --modal-header-border: #eeeeee;
+
+    /* Status Bar Colors */
+    --status-bg: #e8e8e8;
+    --status-border: #cccccc;
+    --status-text: #555555;
+
+    /* Shadow Colors */
+    --shadow-dark: rgba(0, 0, 0, 0.1);
+    --shadow-light: rgba(0, 0, 0, 0.15);
+}
