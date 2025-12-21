@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Eufy Security WebSocket Client</title>
+    <title>Eufy Security Web Client</title>
     <!-- Stylesheets -->
     <link rel="stylesheet" href="css/styles.css">
     <link id="theme-link" rel="stylesheet" href="css/dark-theme.css">
@@ -11,36 +11,54 @@
     <script src="js/theme-switcher.js"></script>
     <script src="js/main.js"></script>
     <script src="js/ui.js"></script>
+    <script src="js/ui-deviceproperties.js"></script>
     <script src="js/ws-client.js"></script>
     <script src="js/video.js"></script>
 </head>
 
 <body>
     <div class="header-bar">
-        <h1>Eufy Security Web Client</h1>
-        <button id="config-btn" title="Configuration">⚙</button>
-        <button id="notification-btn">Activate Notifications</button>
-        <button id="connect-btn">Connect</button>
-        <button id="theme-toggle-btn" title="Switch theme">🔆</button>
-    </div>
-    <div id="device-select-container">
-        <label for="device-select">Select device:</label>
-        <select id="device-select"></select>
-        <button id="device-update-btn" title="Refresh device">&#10227</button>
-        <button id="device-video-btn" class="connect">Start Video</button>
-    </div>
-    <div class="device-info-outer">
-        <div id="device-info-container">
-            <div id="device-info"></div>
-            <div id="device-presets"></div>
-            <div id="device-picture"></div>
+        <h1><img src="favicon.ico" alt="Eufy Security Logo">Eufy Security Web Client</h1>
+        <div class="header-actions">
+            <button id="notification-btn">Activate Notifications</button>
+            <button id="device-video-btn" class="connect">Start Video</button>
+            <button id="connect-btn">Connect</button>
+            <button id="config-btn" title="Configuration">⚙</button>
+            <button id="theme-toggle-btn" title="Switch theme">🔆</button>
         </div>
-        <!-- <button id="device-test-btn">Test</button> -->
     </div>
-    <details class="info-details">
-        <summary>Received information</summary>
-        <pre id="info"></pre>
-    </details>
+    <div class="container">
+        <aside class="sidebar">
+            <div id="device-select-container">
+                <label for="device-select">Select device:</label>
+                <div id="device-select-row">
+                    <select id="device-select"></select>
+                    <button id="device-update-btn" title="Refresh device">&#10227</button>
+                </div>
+            </div>
+            <div id="device-info"></div>
+        </aside>
+        <main class="main-content">
+            <div id="device-toolbar"></div>
+            <div id="device-content">
+                <div id="device-picture"></div>
+                <details class="info-details">
+                    <summary>Received information</summary>
+                    <pre id="info"></pre>
+                </details>
+            </div>
+            <div class="status-bar">
+                <div>
+                    <span id="connection-status">Not connected</span>
+                    &nbsp;-&nbsp;
+                    <span id="station-sn"></span>
+                    <span id="station-version"></span>
+                </div>
+                <span id="ws-version"></span>
+            </div>
+        </main>
+    </div>
+
     <div id="config-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -109,19 +127,6 @@
                 <button id="config-cancel-btn">Cancel</button>
             </div>
         </div>
-    </div>
-    <div id="status">
-        <div id="status-content">
-            <div id="status-line1">
-                <span id="connection-status">Not connected</span>
-                <span id="ws-version"></span>
-            </div>
-            <div id="status-line2">
-                <span id="station-sn"></span>
-                <span id="station-version"></span>
-            </div>
-        </div>
-        <button id="status-toggle-btn" title="Collapse/expand bar">&#9654;</button>
     </div>
 </body>
 

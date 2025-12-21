@@ -161,7 +161,7 @@ function clearActiveStreamClients() {
  * @param {string} severity - Log level: 'error', 'warn', 'info', 'debug'
  */
 function log(message, severity = 'info') {
-    const levels = ['error', 'warn', 'info', 'debug'];
+    const levels = ['error', 'warn', 'info', 'debug', 'trace'];
     const msgLevel = levels.indexOf(severity);
     if (msgLevel === -1) return;
     if (LOGGINGLEVEL < 0) LOGGINGLEVEL = 0;
@@ -169,10 +169,11 @@ function log(message, severity = 'info') {
     if (msgLevel > LOGGINGLEVEL) return;
 
     const prefix = {
+        trace: '[TRACE]',
         debug: '[DEBUG]',
         info: '[INFO]',
         warn: '[WARN]',
-        error: '[ERROR]'
+        error: '[ERROR]',
     }[severity] || '';
 
     // Route to appropriate console method based on severity

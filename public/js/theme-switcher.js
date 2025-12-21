@@ -4,6 +4,7 @@
  * @type {string[]}
  */
 const themes = ['dark', 'light'];
+const localStorageKeySelectedTheme = 'eufyWebClientSelectedTheme';
 
 /**
  * Reference to the theme stylesheet link element.
@@ -27,7 +28,7 @@ function themeApply(theme) {
         theme = 'dark';
     }
     themeLink.href = `css/${theme}-theme.css`;
-    localStorage.setItem('selectedTheme', theme);
+    localStorage.setItem(localStorageKeySelectedTheme, theme);
     themeUpdateButton(theme);
 }
 
@@ -44,7 +45,7 @@ function themeUpdateButton(theme) {
  * Toggles between dark and light themes.
  */
 function themeToggle() {
-    const currentTheme = localStorage.getItem('selectedTheme') || 'dark';
+    const currentTheme = localStorage.getItem(localStorageKeySelectedTheme) || 'dark';
     const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
     themeApply(nextTheme);
 }
@@ -57,6 +58,6 @@ function themeInit() {
     themeLink = document.getElementById('theme-link');
     themeToggleBtn = document.getElementById('theme-toggle-btn');
 
-    themeApply(localStorage.getItem('selectedTheme') || 'dark');
+    themeApply(localStorage.getItem(localStorageKeySelectedTheme) || 'dark');
     themeToggleBtn.addEventListener('click', themeToggle);
 }

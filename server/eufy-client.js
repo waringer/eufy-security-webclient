@@ -146,6 +146,7 @@ async function connect(eufyConfig) {
 
                 // Forward video chunks to transcoder with metadata
                 videostream.on("data", (chunk) => {
+                    utils.log(`📹 Video chunk received - Size: ${chunk.length} bytes`, 'trace');
                     transcode.handleVideoData(chunk, {
                         videoCodec: VideoCodec[metadata.videoCodec],
                         videoFPS: metadata.videoFPS,
@@ -156,6 +157,7 @@ async function connect(eufyConfig) {
 
                 // Forward audio chunks to transcoder with metadata
                 audiostream.on("data", (chunk) => {
+                    utils.log(`🎵 Audio chunk received - Size: ${chunk.length} bytes`, 'trace');
                     transcode.handleAudioData(chunk, {
                         audioCodec: AudioCodec[metadata.audioCodec],
                     })
@@ -767,9 +769,9 @@ function addStation(station) {
 
         // Handle livestream stop command (e.g., due to resolution change)
         if (result.command_type === 1004 && currentStreamingSN) {
-            // Handle livestream_stop because of changed resolution
+            // Handle livestream_stop forced by station
             if (utils.getActiveStreamClients().size !== 0) {
-                // TODO: works not yet properly, needs testing and fixing
+                // TODO: works not yet properly, needs testing and fixing - perhaps better to close all clients instead? so they can reconnect properly
 
                 utils.log('⚠️ Warning: Livestream stopped, but there are still active clients', 'warn');
                 utils.log(`   Active clients: ${utils.getActiveStreamClients().size}`, 'debug');
@@ -777,10 +779,16 @@ function addStation(station) {
                 utils.log(`   FFmpeg transcoding active: ${transcode.isTranscoding}`, 'debug');
                 utils.log(`   Has init segment: ${transcode.hasInitSegment}`, 'debug');
 
-                transcode.clearMetadata();
+                // transcode.clearMetadata();
                 startStreamForDevice(currentStreamingSN);
 
-                utils.log(`🔄 Stream restart initiated at ${Date.now()}`, 'info');
+                // setTimeout(() => {
+                //     utils.log('🔄 Restarting livestream for device after stop command...', 'info');
+                //     // transcode.clearMetadata();
+                //     startStreamForDevice(currentStreamingSN);
+                // }, 1000);
+
+                utils.log(`🔄 Stream restart initiated at ${Date.now()}`, 'debug');
             }
         }
 

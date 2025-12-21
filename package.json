@@ -1,6 +1,6 @@
 {
   "name": "eufy-security-webclient",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Server and Web GUI for Eufy Security cameras using https://github.com/bropat/eufy-security-client - live video streaming, device control, and H.265 to H.264/AAC transcoding via ffmpeg.",
   "main": "main.js",
   "scripts": {

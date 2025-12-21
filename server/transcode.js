@@ -58,15 +58,15 @@ function initTranscode() {
  * @param {Object} metadata - Video metadata (codec, resolution, FPS)
  */
 function handleVideoData(buffer, metadata) {
+    utils.log(`📹 Video chunk received - Size: ${buffer.length} bytes`, 'trace');
+
     // Store metadata on first frame received
     if (!videoMetadata && metadata) {
         videoMetadata = metadata;
         utils.log(`📹 Video: ${metadata.videoCodec} ${metadata.videoWidth}x${metadata.videoHeight} @ ${metadata.videoFPS}fps`, 'info');
     } else if (metadata && (videoMetadata.videoWidth !== metadata.videoWidth || videoMetadata.videoHeight !== metadata.videoHeight)) {
         // Resolution changed mid-stream!
-        utils.log(`🔄 VIDEO RESOLUTION CHANGE DETECTED!`, 'warn');
-        utils.log(`   Old: ${videoMetadata.videoWidth}x${videoMetadata.videoHeight}`, 'warn');
-        utils.log(`   New: ${metadata.videoWidth}x${metadata.videoHeight}`, 'warn');
+        utils.log(`🔄 Video resolution changed: ${videoMetadata.videoWidth}x${videoMetadata.videoHeight} => ${metadata.videoWidth}x${metadata.videoHeight}`, 'warn');
         videoMetadata = metadata;
     }
 
@@ -93,6 +93,8 @@ function handleVideoData(buffer, metadata) {
  * @param {Object} metadata - Audio metadata (codec)
  */
 function handleAudioData(buffer, metadata) {
+    utils.log(`🎵 Audio chunk received - Size: ${buffer.length} bytes`, 'trace');
+
     // Store metadata on first audio frame received
     if (!audioMetadata && metadata) {
         audioMetadata = metadata;
@@ -224,6 +226,8 @@ function startTranscoding() {
     let chunkBuffer = Buffer.alloc(0);
 
     ffmpegProcess.stdout.on('data', (chunk) => {
+        utils.log(`📦 ffmpeg output chunk received - Size: ${chunk.length} bytes`, 'trace');
+
         // Accumulate incoming data
         chunkBuffer = Buffer.concat([chunkBuffer, chunk]);
 
@@ -240,10 +244,6 @@ function startTranscoding() {
             // Extract complete box and update buffer
             const box = chunkBuffer.slice(0, boxSize);
             chunkBuffer = chunkBuffer.slice(boxSize);
-
-            // if (boxType === 'moof' || boxType === 'mdat') {
-            //     utils.log(`📦 MP4 box: ${boxType} (${boxSize} bytes, ${utils.getActiveStreamClients().size} clients)`, 'debug');
-            // }
 
             /**
              * Init Segment Capture

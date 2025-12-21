@@ -19,6 +19,7 @@
 // Global UI state
 let presetButtons = null;   // Number of preset position buttons to display
 let inConfig = false;       // True when config modal is open (disables keyboard shortcuts)
+let lastDeviceInfo = null   // Last displayed device properties serial number
 
 // ============================================================================
 // Debug and Initialization
@@ -69,11 +70,6 @@ function uiInit() {
     document.getElementById('notification-btn').onclick = function () {
         uiInitNotifiactions();
     }
-
-    // Status bar collapse/expand toggle
-    document.getElementById('status-toggle-btn').addEventListener('click', function () {
-        document.getElementById('status').classList.toggle('collapsed');
-    });
 
     // Device dropdown: load device properties on selection change
     const select = document.getElementById('device-select');
@@ -265,9 +261,10 @@ function uiReset() {
     document.getElementById('device-update-btn').style.display = "none"
     document.getElementById('device-video-btn').style.display = "none"
     uiUpdateConnectButtonState();
-    uiShowPositionPresetControls(false);
+    uiUpdateDeviceToolBar(false);
     uiChangePositionPresetError(null);
     uiShowConfigButton(!!transcodeConfig);
+    lastDeviceInfo = null;
 }
 
 /**
@@ -391,231 +388,17 @@ function uiUpdateStatus(text, color = 'black') {
  * Replaces device info table with new properties
  * @param {Object} props - Device properties object
  */
-/**
- * Update Device Info Table
- * Replaces device info table with new properties
- * @param {Object} props - Device properties object
- */
 function uiUpdateDeviceInfoTable(props) {
-    document.getElementById('device-info').innerHTML = uiMakeDeviceInfoTable(props);
-}
+    if (document.getElementById('device-info').children.length === 0)
+        uiCreatePropertyTable('device-info');
 
-/**
- * Make Device Info Table
- * Generates HTML table from device properties
- * 
- * Features:
- * - XSS protection via HTML escaping
- * - Boolean values as ✓/✗ icons
- * - Conditional rows (only show if property exists)
- * - Formatted sensitivity values (x/5 scale)
- * - Live-updating WiFi RSSI and signal level
- * 
- * Property categories:
- * - Basic info (name, model, SN, versions)
- * - WiFi status (RSSI, signal level)
- * - Device state (enabled, snooze)
- * - Video/audio settings (quality, nightvision, watermark)
- * - Motion detection (sensitivity, types, range)
- * - Detection events (person, pet, vehicle, sound)
- * - Light settings (brightness, modes, timers)
- * - Notifications (types, intervals)
- * - Recording settings (continuous, RTSP)
- * - Statistics (working days, events)
- * 
- * @param {Object} props - Device properties object
- * @returns {string} HTML table string
- */
-function uiMakeDeviceInfoTable(props) {
-    // Helper to escape HTML special characters to prevent XSS
-    function escapeHtml(str) {
-        if (str === undefined || str === null) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+    const current = props.serialNumber;
+    if (lastDeviceInfo && current && lastDeviceInfo === current) {
+        uiUpdateDeviceProperties(props, false);
+    } else {
+        lastDeviceInfo = current;
+        uiUpdateDeviceProperties(props, true);
     }
-
-    // Helper function to format boolean values as icons
-    const formatBool = (val) => {
-        if (val === true) return '<span class="true">✓</span>';
-        if (val === false) return '<span class="false">✗</span>';
-        return '-';
-    };
-
-    // Helper function to format detection sensitivity (1-5 scale typically)
-    const formatSensitivity = (val) => {
-        if (val === undefined || val === null) return '-';
-        return `${escapeHtml(val)}/5`;
-    };
-
-    // Helper function to add a row only if property exists
-    const addRow = (label, value, unit = '') => {
-        if (value !== undefined && value !== null) {
-            let displayValue;
-            if (typeof value === 'boolean') {
-                displayValue = formatBool(value);
-            } else {
-                displayValue = escapeHtml(value);
-            }
-            return `<tr><td class="label">${escapeHtml(label)}:</td><td class="value">${displayValue}${escapeHtml(unit)}</td></tr>`;
-        }
-        return '';
-    };
-
-    let html = `<table class="device-info-table"><tbody>`;
-
-    // Basic device info (always shown)
-    html += addRow('Name', props.name);
-    html += addRow('Model', props.model);
-    html += addRow('Serial Number', props.serialNumber);
-    html += addRow('HW Version', props.hardwareVersion);
-    html += addRow('SW Version', props.softwareVersion);
-    html += addRow('Type', props.type);
-
-    // WiFi info (if available)
-    if (props.wifiRssi !== undefined) {
-        html += `<tr><td class="label">WiFi RSSI:</td><td class="value"><span id='wifiRssi'>${escapeHtml(props.wifiRssi)}</span> dBm</td></tr>`;
-    }
-    if (props.wifiSignalLevel !== undefined) {
-        html += `<tr><td class="label">WiFi Signal Level:</td><td class="value"><span id='wifiSignalLevel'>${escapeHtml(props.wifiSignalLevel)}</span></td></tr>`;
-    }
-
-    // Device state
-    html += addRow('Enabled', props.enabled);
-    html += addRow('Snooze', props.snooze);
-    if (props.snooze && props.snoozeTime) {
-        html += addRow('Snooze Time', props.snoozeTime, ' min');
-    }
-
-    // Video/Audio settings
-    html += addRow('Auto Nightvision', props.autoNightvision);
-    html += addRow('Nightvision', props.nightvision);
-    html += addRow('Status LED', props.statusLed);
-    html += addRow('Image Mirrored', props.imageMirrored);
-    html += addRow('Watermark', props.watermark);
-
-    if (props.videoStreamingQuality !== undefined) {
-        html += addRow('Video Streaming Quality', props.videoStreamingQuality);
-    }
-    if (props.videoRecordingQuality !== undefined) {
-        html += addRow('Video Recording Quality', props.videoRecordingQuality);
-    }
-
-    // Audio settings
-    html += addRow('Microphone', props.microphone);
-    html += addRow('Speaker', props.speaker);
-    if (props.speakerVolume !== undefined) {
-        html += addRow('Speaker Volume', props.speakerVolume, '%');
-    }
-    html += addRow('Audio Recording', props.audioRecording);
-
-    // Motion detection
-    html += addRow('Motion Detection', props.motionDetection);
-    if (props.motionDetection) {
-        html += addRow('Motion Sensitivity', formatSensitivity(props.motionDetectionSensitivity));
-        html += addRow('Motion Detected', props.motionDetected);
-        html += addRow('Motion Tracking', props.motionTracking);
-        html += addRow('Motion Auto Cruise', props.motionAutoCruise);
-        html += addRow('Motion Out of View', props.motionOutOfViewDetection);
-        html += addRow('Motion Test Mode', props.motionDetectionTestMode);
-
-        // Motion detection types
-        html += addRow('Detect Human', props.motionDetectionTypeHuman);
-        html += addRow('Human Recognition', props.motionDetectionTypeHumanRecognition);
-        html += addRow('Detect Pet', props.motionDetectionTypePet);
-        html += addRow('Detect Vehicle', props.motionDetectionTypeVehicle);
-        html += addRow('Detect Other Motion', props.motionDetectionTypeAllOtherMotions);
-
-        // Motion detection range
-        if (props.motionDetectionRange !== undefined) {
-            html += addRow('Motion Range', props.motionDetectionRange);
-        }
-        if (props.motionDetectionRangeStandardSensitivity !== undefined) {
-            html += addRow('Range Standard Sens.', props.motionDetectionRangeStandardSensitivity);
-        }
-        if (props.motionDetectionRangeAdvancedLeftSensitivity !== undefined) {
-            html += addRow('Range Advanced Left', props.motionDetectionRangeAdvancedLeftSensitivity);
-        }
-        if (props.motionDetectionRangeAdvancedRightSensitivity !== undefined) {
-            html += addRow('Range Advanced Right', props.motionDetectionRangeAdvancedRightSensitivity);
-        }
-    }
-
-    // Detection events
-    html += addRow('Person Detected', props.personDetected);
-    if (props.personName) {
-        html += addRow('Person Name', props.personName);
-    }
-    html += addRow('Identity Person', props.identityPersonDetected);
-    html += addRow('Stranger Detected', props.strangerPersonDetected);
-    html += addRow('Pet Detected', props.petDetected);
-    html += addRow('Pet Detection', props.petDetection);
-    html += addRow('Vehicle Detected', props.vehicleDetected);
-    html += addRow('Dog Detected', props.dogDetected);
-    html += addRow('Dog Lick Detected', props.dogLickDetected);
-    html += addRow('Dog Poop Detected', props.dogPoopDetected);
-
-    // Sound detection
-    html += addRow('Sound Detection', props.soundDetection);
-    if (props.soundDetection) {
-        html += addRow('Sound Type', props.soundDetectionType);
-        html += addRow('Sound Sensitivity', formatSensitivity(props.soundDetectionSensitivity));
-    }
-    html += addRow('Sound Detected', props.soundDetected);
-    html += addRow('Crying Detected', props.cryingDetected);
-
-    // Light settings
-    html += addRow('Light', props.light);
-    if (props.lightSettingsEnable !== undefined) {
-        html += addRow('Light Settings Enable', props.lightSettingsEnable);
-        html += addRow('Light Brightness Manual', props.lightSettingsBrightnessManual, '%');
-        html += addRow('Light Brightness Motion', props.lightSettingsBrightnessMotion, '%');
-        html += addRow('Light Brightness Schedule', props.lightSettingsBrightnessSchedule, '%');
-        html += addRow('Light Motion Triggered', props.lightSettingsMotionTriggered);
-        html += addRow('Light Activation Mode', props.lightSettingsMotionActivationMode);
-        html += addRow('Light Motion Timer', props.lightSettingsMotionTriggeredTimer, 's');
-    }
-
-    // Notifications
-    html += addRow('Notification Type', props.notificationType);
-    html += addRow('Notification Interval', props.notificationIntervalTime, ' min');
-    html += addRow('Notify Person', props.notificationPerson);
-    html += addRow('Notify Pet', props.notificationPet);
-    html += addRow('Notify Other Motion', props.notificationAllOtherMotion);
-    html += addRow('Notify Vehicle', props.notificationVehicle);
-
-    // Recording settings
-    html += addRow('Continuous Recording', props.continuousRecording);
-    if (props.continuousRecording) {
-        html += addRow('Continuous Rec. Type', props.continuousRecordingType);
-    }
-    html += addRow('Video Type Store to NAS', props.videoTypeStoreToNAS);
-
-    // RTSP settings
-    html += addRow('RTSP Stream', props.rtspStream);
-    if (props.rtspStream && props.rtspStreamUrl) {
-        html += addRow('RTSP URL', props.rtspStreamUrl);
-    }
-
-    // Other settings
-    html += addRow('Rotation Speed', props.rotationSpeed);
-    html += addRow('Auto Calibration', props.autoCalibration);
-    if (props.dualCamWatchViewMode !== undefined) {
-        html += addRow('Dual Cam View Mode', props.dualCamWatchViewMode);
-    }
-
-    // Statistics
-    if (props.detectionStatisticsWorkingDays !== undefined) {
-        html += addRow('Working Days', props.detectionStatisticsWorkingDays);
-        html += addRow('Detected Events', props.detectionStatisticsDetectedEvents);
-        html += addRow('Recorded Events', props.detectionStatisticsRecordedEvents);
-    }
-
-    html += `</tbody></table>`;
-    return html;
 }
 
 // ============================================================================
@@ -641,7 +424,7 @@ function uiMakeDeviceList(devices) {
     });
 
     if (devices.length > 0) {
-        selectContainer.style.display = 'block ruby';
+        selectContainer.style.display = null;
 
         // Auto-select and load first device
         select.selectedIndex = 0;
@@ -679,9 +462,8 @@ function uiUpdateVideoButton(playing) {
  * @param {number} rssi - WiFi RSSI value in dBm
  */
 function uiUpdateDeviceWifiRssi(deviceSn, rssi) {
-    const rssiEl = document.getElementById('wifiRssi');
-    if (rssiEl && deviceSn === uiGetDeviceSn()) {
-        rssiEl.textContent = ` ${rssi} `;
+    if (deviceSn === uiGetDeviceSn()) {
+        uiUpdateDeviceProperties({ wifiRssi: rssi }, false);
     }
 }
 
@@ -692,9 +474,8 @@ function uiUpdateDeviceWifiRssi(deviceSn, rssi) {
  * @param {number} signalLevel - WiFi signal level (0-4)
  */
 function uiUpdateDeviceWifiSignalLevel(deviceSn, signalLevel) {
-    const signalEl = document.getElementById('wifiSignalLevel');
-    if (signalEl && deviceSn === uiGetDeviceSn()) {
-        signalEl.textContent = ` ${signalLevel} `;
+    if (deviceSn === uiGetDeviceSn()) {
+        uiUpdateDeviceProperties({ wifiSignalLevel: signalLevel }, false);
     }
 }
 
@@ -970,13 +751,13 @@ function uiUpdateDeviceVideo() {
     video.autoplay = true;
 
     // Create buffer size display
-    const p = document.createElement('p');
+    const p = document.getElementById('toolbar-text')
     const strong = document.createElement('strong');
     strong.textContent = 'Buffer:';
     const bufferSpan = document.createElement('span');
     bufferSpan.id = 'device-video-buffer';
     bufferSpan.textContent = '0s';
-    p.appendChild(strong);
+    p.replaceChildren(strong);
     p.appendChild(bufferSpan);
 
     // Create error message overlay
@@ -984,7 +765,7 @@ function uiUpdateDeviceVideo() {
     errorDiv.id = 'device-video-errorMessage';
 
     // Replace image with video player interface
-    picDiv.replaceChildren(video, p, errorDiv);
+    picDiv.replaceChildren(errorDiv, video);
 }
 
 // ============================================================================
@@ -1004,18 +785,17 @@ function uiShowVideoButton(show) {
  * Show Position Preset Controls
  * Creates and displays preset position buttons for PTZ camera
  * Button count is determined by global presetButtons variable
- * @param {boolean} show - True to show controls, false to hide
+ * @param {boolean} showPresets - True to show controls, false to hide
  */
-function uiShowPositionPresetControls(show) {
-    const presetsContainer = document.getElementById('device-presets');
-    presetsContainer.style.display = show ? 'grid' : 'none';
+function uiUpdateDeviceToolBar(showPresets) {
+    const toolbarContainer = document.getElementById('device-toolbar');
 
-    if (show) {
+    if (showPresets) {
         // Add label
-        const span = document.createElement('span');
-        span.className = 'preset-label';
-        span.textContent = 'Pos:';
-        presetsContainer.replaceChildren(span);
+        const presetsLabel = document.createElement('span');
+        presetsLabel.className = 'preset-label';
+        presetsLabel.textContent = 'Preset Position:';
+        toolbarContainer.replaceChildren(presetsLabel);
 
         // Create preset buttons (typically 4-8 positions)
         for (let i = 0; i < presetButtons; i++) {
@@ -1032,9 +812,30 @@ function uiShowPositionPresetControls(show) {
                 }
             });
 
-            presetsContainer.appendChild(btn);
+            toolbarContainer.appendChild(btn);
         }
+    } else {
+        toolbarContainer.replaceChildren();
     }
+
+    const toolbarText = document.createElement('span');
+    toolbarText.id = 'toolbar-text';
+    toolbarText.textContent = null;
+    toolbarContainer.appendChild(toolbarText);
+
+    const wifi = document.createElement('div');
+    wifi.id = 'device-wifi';
+    toolbarContainer.appendChild(wifi);
+
+    const wifiLabel = document.createElement('span');
+    wifiLabel.textContent = 'WiFi:';
+    wifi.appendChild(wifiLabel);
+
+    const wifiBars = document.createElement('div');
+    wifiBars.id = 'device-wifi-bars';
+    wifi.appendChild(wifiBars);
+
+    uiUpdateWifiBars();
 }
 
 /**

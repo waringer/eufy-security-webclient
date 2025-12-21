@@ -262,6 +262,9 @@ function eufyParseResultMessage(message) {
                 // Hide binary data from debug log to prevent flooding
                 if (props.picture && props.picture.data)
                     message.result.properties.picture.data.data = '[Binary Data Hidden]';
+
+                if (props.picture && props.picture.eventData)
+                    message.result.properties.picture.eventData.data = '[Binary Data Hidden]';
             }
 
             uiDebugLog(`Properties for device ${message.result.serialNumber}:`);
@@ -273,7 +276,7 @@ function eufyParseResultMessage(message) {
                 if (Array.isArray(message.result.commands)) {
                     // Show/hide UI controls based on device capabilities
                     uiShowVideoButton(message.result.commands.includes('deviceStartLivestream'));
-                    uiShowPositionPresetControls(message.result.commands.includes('devicePresetPosition'));
+                    uiUpdateDeviceToolBar(message.result.commands.includes('devicePresetPosition'));
                     uiShowPanTiltControls(message.result.commands.includes('devicePanAndTilt'));
                 }
             }
