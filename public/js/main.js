@@ -8,7 +8,7 @@
  */
 
 // Debug mode toggle for development logging
-const debugMode = false; // Set to true to enable debug logging
+const debugMode = true; // Set to true to enable debug logging
 
 // Global configuration state
 let transcodeConfig = null;

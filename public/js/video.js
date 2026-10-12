@@ -206,9 +206,27 @@ async function videoFetchStream(server, deviceSerial) {
             // Stream ended by server
             if (done) {
                 debugConsoleLog('Video stream ended by server');
-                videoSetStatus('Connection ended', 'disconnected');
-                videoShowError('Stream was ended by the server');
-                videoStopStream();
+
+                // If still streaming flag is true, it means user didn't stop it
+                if (isStreaming) {
+                    videoSetStatus('Reconnecting...', 'connecting');
+                    videoShowError('Stream restarting...');
+
+                    // Cleanup current stream first
+                    if (fetchController) fetchController.abort();
+
+                    // Auto-reconnect after 2 seconds
+                    document.getElementById('device-video-btn').click();  // Simulate button click to restart
+                    reconnectTimeout = setTimeout(() => {
+                        debugConsoleLog('Auto-reconnecting after server disconnect...');
+                        // videoStartStream(server, deviceSerial);
+                        document.getElementById('device-video-btn').click();  // Simulate button click to restart
+                    }, 2000);
+                } else {
+                    // User stopped streaming manually
+                    videoSetStatus('Connection ended', 'disconnected');
+                    videoStopStream();
+                }
                 break;
             }
 

@@ -33,8 +33,7 @@ const DEFAULT_CONFIG = {
         username: '',              // Eufy account username/email
         password: '',              // Eufy account password
         persistentDir: DATA_DIR,   // Directory for Eufy client persistent data
-        country: 'DE',             // Country code for Eufy API
-        language: 'en'             // Language for Eufy API responses
+        country: 'DE'              // Country code for Eufy API
     },
     TRANSCODING_PRESET: process.env.TRANSCODING_PRESET || 'ultrafast',  // FFmpeg encoding speed
     TRANSCODING_CRF: process.env.TRANSCODING_CRF || '23',              // Constant Rate Factor (quality)
@@ -73,6 +72,12 @@ function loadConfig() {
         if (fs.existsSync(CONFIG_FILE)) {
             const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
             log(`📋 Configuration loaded from ${CONFIG_FILE}`, 'info');
+
+            // 'language' belonged to the former Eufy client and is not used anymore
+            if (savedConfig.EUFY_CONFIG && 'language' in savedConfig.EUFY_CONFIG) {
+                const { language, ...eufyConfig } = savedConfig.EUFY_CONFIG;
+                savedConfig.EUFY_CONFIG = eufyConfig;
+            }
             return { ...DEFAULT_CONFIG, ...savedConfig };
         }
     } catch (err) {

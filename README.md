@@ -1,6 +1,6 @@
 # Eufy Security Web Client
 
-A web-based client and video transcoding server using [eufy-security-client](https://github.com/bropat/eufy-security-client), enabling live video streaming, device control, and H.265 to H.264/AAC transcoding via ffmpeg. This project provides a simple web UI for interacting with Eufy security cameras and connects directly to the Eufy Cloud.
+A web-based client and video transcoding server using [eufy-sdk](https://github.com/mega-yfue/eufy-sdk), enabling live video streaming, device control, and H.265 to H.264/AAC transcoding via ffmpeg. This project provides a simple web UI for interacting with Eufy security cameras and connects directly to the Eufy Cloud.
 
 ## Features
 - **Live video streaming** from Eufy cameras with H.265 to H.264/AAC transcoding (supports both H.265 and H.264 streams)
@@ -97,8 +97,7 @@ Configuration is managed through `data/config.json`. Create this file before fir
     "username": "your-eufy-email@example.com",
     "password": "your-eufy-password",
     "persistentDir": "./data",
-    "country": "US",
-    "language": "en"
+    "country": "US"
   },
   "TRANSCODING_PRESET": "ultrafast",
   "TRANSCODING_CRF": "23",
@@ -116,7 +115,6 @@ Configuration is managed through `data/config.json`. Create this file before fir
 | EUFY_CONFIG.password    | (required)             | Your Eufy account password |
 | EUFY_CONFIG.persistentDir | ./data              | Directory for Eufy client data |
 | EUFY_CONFIG.country     | US                     | Country code (US, DE, UK, etc.) |
-| EUFY_CONFIG.language    | en                     | Language code (en, de, fr, etc.) |
 | TRANSCODING_PRESET      | ultrafast              | ffmpeg preset for transcoding |
 | TRANSCODING_CRF         | 23                     | ffmpeg CRF value (quality, 0-51) |
 | VIDEO_SCALE             | 1280:-2                | ffmpeg video scaling |
@@ -221,7 +219,7 @@ The project follows a modular architecture:
 
 **Backend (Node.js):**
 - **main.js**: Main entry point, initializes all modules
-- **server/eufy-client.js**: Integration with eufy-security-client library
+- **server/eufy-client.js**: Integration with @mega-yfue/eufy-sdk (login incl. captcha/2FA, livestream, events)
 - **server/transcode.js**: FFmpeg transcoding engine
 - **server/ws-api.js**: WebSocket API server for JSON-based communication
 - **server/rest.js**: REST API and HTTP server with static file serving
@@ -244,7 +242,7 @@ All code, comments, and variables are in English. The UI labels and messages are
 ## Notes
 - **Direct Eufy Cloud connection**: This server connects directly to the Eufy Cloud using your credentials. No separate eufy-security-ws server is needed.
 - **Only one device can be streamed at a time** per server instance. If multiple clients try to access different devices simultaneously, the second request will be rejected with a 409 Conflict error.
-- **Persistent authentication**: Eufy authentication tokens are stored in `data/persistent.json` and persist across restarts.
+- **Persistent authentication**: Eufy authentication tokens are stored in `data/eufy-session.json`; captcha / 2FA requests on first login are answered in the web UI and persist across restarts.
 - For production deployments, adjust configuration settings for optimal performance and quality
 - ffmpeg is automatically installed in the Docker image
 - Configuration changes made via the web UI are persisted to `data/config.json` and survive restarts
@@ -284,7 +282,7 @@ All code, comments, and variables are in English. The UI labels and messages are
 BSD-3-Clause - See [LICENSE](LICENSE) file for details.
 
 ## Links
-- [eufy-security-client](https://github.com/bropat/eufy-security-client) - The client lib used to connect to Eufy
+- [eufy-sdk](https://github.com/mega-yfue/eufy-sdk) - The SDK used to connect to Eufy (requires Node >= 24.5)
 
 ---
 

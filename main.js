@@ -1,5 +1,5 @@
 /**
- * eufy-security-client Streaming Proxy Server
+ * Eufy Security Webclient - Streaming Proxy Server
  * 
  * Main entry point for the streaming proxy server that handles:
  * - Connection to Eufy Security devices
@@ -21,7 +21,7 @@ eufy.connect(CONFIG.EUFY_CONFIG);          // Connect to Eufy Security system
 transcode.initTranscode();                 // Initialize video transcoding service
 restServer.initRestServer();               // Start REST API server
 
-utils.log('🚀 eufy-security-client Streaming Proxy started', 'info');
+utils.log('🚀 Eufy Security Webclient streaming proxy started', 'info');
 
 /**
  * Graceful shutdown handler

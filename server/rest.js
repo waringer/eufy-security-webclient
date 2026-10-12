@@ -52,6 +52,32 @@ function initRestServer() {
      * Streams live video from a Eufy device in fMP4 format.
      * Only one device can stream at a time to prevent resource conflicts.
      */
+    /**
+     * Event Thumbnail Endpoint
+     * Route: GET /event-thumb/:recordId
+     *
+     * JPEG thumbnail of an event from the station's history (fetched over P2P, cached on disk).
+     * Only record ids of event lists this server delivered are known.
+     */
+    app.get('/event-thumb/:recordId', async (req, res) => {
+        const recordId = req.params.recordId;
+        if (!/^\d{1,20}$/.test(recordId)) {
+            return res.status(400).send('Invalid record id');
+        }
+
+        try {
+            const jpeg = await eufy.getEventThumbnail(recordId);
+            if (!jpeg) return res.status(404).send('Unknown event');
+
+            res.set('Content-Type', 'image/jpeg');
+            res.set('Cache-Control', 'public, max-age=86400, immutable');   // a record id never changes its image
+            res.send(jpeg);
+        } catch (error) {
+            utils.log(`❌ Event thumbnail ${recordId}: ${error.message}`, 'warn');
+            res.status(502).send('Thumbnail not available');
+        }
+    });
+
     app.get('/:serialNumber.mp4', (req, res) => {
         const requestedDevice = req.params.serialNumber;
 
@@ -233,15 +259,11 @@ function initRestServer() {
         let CONFIG = utils.loadConfig();
         for (const key of Object.keys(newConfig)) {
             if (allowedKeys.includes(key)) {
-                // Track only fields that actually changed (avoid unnecessary restarts)
-                if (JSON.stringify(CONFIG[key]) !== JSON.stringify(newConfig[key])) {
-                    if (key === 'EUFY_CONFIG') {
-                        // Merge EUFY_CONFIG subfields
-                        CONFIG[key] = { ...CONFIG[key], ...newConfig[key] };
-                    } else {
-                        CONFIG[key] = newConfig[key];
-                    }
-
+                // Track only fields that actually changed (avoid unnecessary restarts).
+                // EUFY_CONFIG is merged first: the form does not send every subfield (e.g. persistentDir)
+                const next = key === 'EUFY_CONFIG' ? { ...CONFIG[key], ...newConfig[key] } : newConfig[key];
+                if (JSON.stringify(CONFIG[key]) !== JSON.stringify(next)) {
+                    CONFIG[key] = next;
                     updatedFields.push(key);
                 }
             }
@@ -323,7 +345,10 @@ function initRestServer() {
     // Serve static files (HTML, CSS, JS) for the web UI
     app.use(express.static(STATIC_DIR, {
         index: 'index.html',
-        extensions: ['html', 'htm']
+        extensions: ['html', 'htm'],
+        // Always revalidate (ETag): the UI files change with the server, a stale cached script talks
+        // the old protocol to the new server
+        setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache')
     }));
 
     const server = app.listen(PORT, () => {

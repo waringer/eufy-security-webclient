@@ -1,30 +1,60 @@
 /**
  * Eufy Security Client Module
- * 
- * Manages connection to Eufy Security system and provides:
- * - Device and station discovery and management
+ *
+ * Manages connection to Eufy Security system (via @mega-yfue/eufy-sdk) and provides:
+ * - Login handling incl. captcha / 2FA (answered through the web UI)
+ * - Device discovery and management
  * - Live streaming control
  * - Event handling and broadcasting
  * - WebSocket API command handlers
  * - Snapshot management and updates
  */
 
+const fs = require('fs');
+const path = require('path');
 const utils = require('./utils');
-
-// Use local eufy-security-client in dev mode, installed package in production
-const eufyClientPath = utils.isDev ? '../../eufy-security-client' : 'eufy-security-client';
-const { EufySecurity, AudioCodec, VideoCodec } = require(eufyClientPath);
-const eufyVersion = require(`${eufyClientPath}/package.json`).version;
+const { loadSdk, getSdkVersion } = require('./eufy-sdk');
+const { buildDeviceProperties } = require('./property-meta');
+const events = require('./events');
 
 const transcode = require('./transcode');
 const wsApi = require('./ws-api');
 
+const eufyVersion = getSdkVersion();
+
 // State management
-let eufyClient = null;                      // EufySecurity client instance
+let sdk = null;                             // Loaded SDK module namespace
+let eufyClient = null;                      // EufyMega client instance
+let loggedIn = false;                       // True once login() resolved with status ok
+let loginState = { status: 'idle' };        // Login progress: idle | captcha | 2fa | ok | error
 let wsEvnentHandlersRegistered = false;     // Flag to prevent duplicate handler registration
 let currentStreamingSN = null;              // Serial number of currently streaming device
-let stations = new Set();                   // Set of discovered stations
-let devices = new Set();                    // Set of discovered devices
+let activeStream = null;                    // Live stream consumer of the current device
+const stations = new Set();                 // Serial numbers of discovered stations
+const devices = new Map();                  // Serial number -> Device (strong refs, the SDK only holds them weakly)
+
+/**
+ * Semantic SDK event -> legacy broadcast event name used by the web UI.
+ * Events without a SDK equivalent (alarms, jam, temperature, ...) are not emitted anymore.
+ */
+const EVENT_NAME_MAP = {
+    motion: 'motion detected',
+    personDetected: 'person detected',
+    cryingDetected: 'crying detected',
+    petDetection: 'pet detected',
+    vehicleDetected: 'vehicle detected',
+    soundDetected: 'sound detected',
+    doorbellPress: 'rings',
+    packageDelivered: 'package delivered',
+    packageStranded: 'packet stranded',
+    packageTaken: 'package taken',
+    strangerDetected: 'stranger person detected',
+};
+
+const EVENT_PICTURE_DIR = path.join(utils.dataDir, 'event-pictures');
+
+// Legacy numeric pan/tilt direction (as sent by the UI) -> SDK PtzDirection
+const PTZ_DIRECTIONS = { 1: 'left', 2: 'right', 3: 'up', 4: 'down' };
 
 /**
  * Snapshot Saved Event Handler
@@ -64,842 +94,416 @@ transcode.event.on('snapshotSaved', (deviceSN) => {
 });
 
 /**
+ * Broadcast helper for device events
+ */
+function broadcastDeviceEvent(event, serialNumber, extra = {}) {
+    wsApi.wsBroadcast({
+        type: 'event',
+        event: { source: 'device', event, serialNumber, ...extra }
+    });
+}
+
+/**
+ * Broadcast helper for system level events (login dialogs etc.)
+ */
+function broadcastSystemEvent(event, extra = {}) {
+    wsApi.wsBroadcast({
+        type: 'event',
+        event: { source: 'system', event, ...extra }
+    });
+}
+
+/**
+ * Public login state for the web UI
+ * @returns {Object} status plus captcha image / 2FA method when applicable
+ */
+function getLoginState() {
+    return { ...loginState };
+}
+
+/**
  * Connect to Eufy Security System
- * Initializes the Eufy Security client and registers all event handlers
- * @param {Object} eufyConfig - Configuration object with username, password, country, etc.
+ * Creates the SDK client and starts the login flow. Captcha / 2FA are answered later
+ * through setCaptcha() / setVerifyCode() (web UI).
+ * @param {Object} eufyConfig - Configuration object with username, password, country, persistentDir
  */
 async function connect(eufyConfig) {
     try {
         utils.log('Initializing Eufy Security Client...', 'info');
 
         // Prevent duplicate connections
-        if (eufyClient && eufyClient.isConnected()) {
+        if (eufyClient && isConnected()) {
             utils.log('✓ Eufy client is already connected.', 'warn');
             return;
         }
 
         // Validate required configuration parameters
-        if (eufyConfig.username && eufyConfig.password && eufyConfig.persistentDir && eufyConfig.country && eufyConfig.language) {
-            // Initialize Eufy Security client
-            eufyClient = await EufySecurity.initialize(eufyConfig);
-
-            /**
-             * Connection Event Handlers
-             * Register handlers for connection lifecycle events
-             */
-            eufyClient.on('connect', () => {
-                utils.log('✓ Successfully connected to Eufy!', 'info');
-                // Register WebSocket API handlers once connection is established
-                registerWebSocketHandlers();
-            });
-
-            eufyClient.on("connection error", (error) => {
-                utils.log('❌ Eufy connection error: ' + error, 'error');
-                // Clear cached data on connection error
-                stations.clear();
-                devices.clear();
-            });
-
-            eufyClient.on("push connect", () => {
-                utils.log('🔌 Eufy push connection established.', 'debug');
-            });
-
-            eufyClient.on("push close", () => {
-                utils.log('⚠️ Eufy push connection closed.', 'warn');
-            });
-
-            eufyClient.on("close", () => {
-                utils.log('⚠️ Connection to Eufy closed.', 'warn');
-                // Clear cached data on disconnection
-                stations.clear();
-                devices.clear();
-            });
-
-            /**
-             * Device and Station Discovery Events
-             * Handle addition and removal of stations and devices
-             */
-            eufyClient.on('station added', (station) => {
-                addStation(station);
-            });
-
-            eufyClient.on("station removed", (station) => {
-                stations.delete(station);
-                utils.log(`⚠️ Station removed: ${station.getName()} (${station.getSerial()})`, 'warn');
-            });
-
-            eufyClient.on('device added', (device) => {
-                addDevice(device)
-            });
-
-            eufyClient.on("device removed", (device) => {
-                devices.delete(device);
-                utils.log(`⚠️ Device removed: ${device.getName()} (${device.getSerial()})`, 'warn');
-            });
-
-            /**
-             * Livestream Events
-             * Handle video/audio stream data and forward to transcoding module
-             */
-            eufyClient.on("station livestream start", (station, device, metadata, videostream, audiostream) => {
-                utils.log(`▶️ Livestream started for station: ${station.getName()}, device: ${device.getName()} (${device.getSerial()})`, 'debug');
-
-                // Forward video chunks to transcoder with metadata
-                videostream.on("data", (chunk) => {
-                    utils.log(`📹 Video chunk received - Size: ${chunk.length} bytes`, 'trace');
-                    transcode.handleVideoData(chunk, {
-                        videoCodec: VideoCodec[metadata.videoCodec],
-                        videoFPS: metadata.videoFPS,
-                        videoHeight: metadata.videoHeight,
-                        videoWidth: metadata.videoWidth,
-                    });
-                });
-
-                // Forward audio chunks to transcoder with metadata
-                audiostream.on("data", (chunk) => {
-                    utils.log(`🎵 Audio chunk received - Size: ${chunk.length} bytes`, 'trace');
-                    transcode.handleAudioData(chunk, {
-                        audioCodec: AudioCodec[metadata.audioCodec],
-                    })
-                });
-
-            });
-
-            eufyClient.on("station livestream stop", (station, device) => {
-                utils.log(`⏹️ Livestream stopped for station: ${station.getName()}, device: ${device.getName()} (${device.getSerial()})`, 'debug');
-            });
-
-            // eufyClient.on("station download start", (station, device, metadata, videostream, audiostream) => {
-            //     utils.log(`⬇️ Recording download started for station: ${station.getName()}, device: ${device.getName()} (${device.getSerial()})`, 'info');
-            // });
-
-            // eufyClient.on("station download finish", (station, device) => {
-            //     utils.log(`✅ Recording download finished for station: ${station.getName()}, device: ${device.getName()} (${device.getSerial()})`, 'info');
-            // });
-
-            /**
-             * Station Image Download Event
-             * Broadcasts downloaded images to WebSocket clients
-             */
-            eufyClient.on("station image download", (station, file, image) => {
-                utils.log(`🖼️ Image downloaded from station: ${station.getName()} (${station.getSerial()}) - File: ${file}`, 'debug');
-
-                // Broadcast image to all connected clients
-                wsApi.wsBroadcast({
-                    type: 'event',
-                    event: {
-                        source: "station",
-                        event: 'image downloaded',
-                        serialNumber: station.getSerial(),
-                        file: file,
-                        image: image
-                    }
-                });
-            });
-
-            // Establish connection to Eufy cloud
-            await eufyClient.connect();
-        } else {
+        if (!(eufyConfig.username && eufyConfig.password && eufyConfig.persistentDir && eufyConfig.country)) {
             throw new Error('Eufy configuration parameters are missing. Please check the settings.');
         }
+
+        sdk = await loadSdk();
+
+        // Event history and event thumbnails come from the station (not part of the SDK API)
+        events.init({
+            getClient: () => eufyClient,
+            getInfo: (sn) => deviceInfo.get(sn),
+            listDeviceSerials: () => Array.from(deviceInfo.keys())
+        });
+
+        // WebSocket handlers must exist before login finishes, otherwise the UI
+        // cannot connect to answer captcha / 2FA requests
+        registerWebSocketHandlers();
+
+        loggedIn = false;
+        loginState = { status: 'idle' };
+
+        eufyClient = new sdk.EufyMega({
+            email: eufyConfig.username,
+            password: eufyConfig.password,
+            countryCode: eufyConfig.country,
+            store: new sdk.FileSessionStore(path.join(eufyConfig.persistentDir, 'eufy-session.json')),
+        });
+        registerClientEvents(eufyClient);
+
+        await handleLoginResult(await eufyClient.login());
     } catch (error) {
+        loginState = { status: 'error', message: error.message };
         utils.log('❌ Error during initialization: ' + error.message, 'error');
     }
 }
 
 /**
- * Add Device
- * Registers a newly discovered device and sets up all event handlers
- * Broadcasts device events to WebSocket clients for real-time notifications
- * @param {Device} device - Eufy device object
+ * Register SDK client level event handlers
+ * @param {EufyMega} client - SDK client instance
  */
-function addDevice(device) {
-    utils.log('📷 Device found: ' + device.getName() + ' (' + device.getSerial() + ')', 'debug');
-    devices.add(device);
+function registerClientEvents(client) {
+    client.on('connect', () => utils.log('🔌 Eufy realtime connection established.', 'debug'));
+    client.on('disconnect', () => utils.log('⚠️ Eufy realtime connection closed.', 'warn'));
+    client.on('pushConnect', () => utils.log('🔌 Eufy push connection established.', 'debug'));
+    client.on('pushDisconnect', () => utils.log('⚠️ Eufy push connection closed.', 'warn'));
 
-    /**
-     * Device Event Handlers
-     * Register handlers for all device events and broadcast to WebSocket clients
-     */
+    client.on('error', (error) => utils.log('❌ Eufy error: ' + (error && error.message ? error.message : error), 'error'));
 
-    // Motion detection event
-    device.on("motion detected", (device, state) => {
-        utils.log(`Motion detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'motion detected',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
+    client.on('sessionExpired', (error) => {
+        utils.log('❌ Eufy session expired: ' + (error && error.message ? error.message : error), 'error');
+        loggedIn = false;
+        loginState = { status: 'error', message: 'Session expired' };
+        stations.clear();
+        devices.clear();
+        broadcastSystemEvent('login error', { message: loginState.message });
     });
 
-    // Person detection event
-    device.on("person detected", (device, state, person) => {
-        utils.log(`Person detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state} - Person: ${person ? person : 'unknown'}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'person detected',
-                serialNumber: device.getSerial(),
-                state: state,
-                person: person ? person : 'unknown'
-            }
-        });
+    // Device discovery after the initial listing
+    client.on('deviceAdded', (info) => {
+        client.getDevice(info.sn).then(device => addDevice(device, info)).catch((error) =>
+            utils.log(`❌ Failed to load new device ${info.sn}: ${error.message}`, 'error'));
+    });
+    client.on('deviceRemoved', (info) => {
+        devices.delete(info.sn);
+        utils.log(`⚠️ Device removed: ${info.name} (${info.sn})`, 'warn');
     });
 
-    // Audio detection events
-    device.on("crying detected", (device, state) => {
-        utils.log(`Crying detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'crying detected',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
+    // Catch-all for all semantic device events
+    client.on('event', (e) => handleDeviceEvent(e));
+}
 
-    // Pet detection event
-    device.on("pet detected", (device, state) => {
-        utils.log(`Pet detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'pet detected',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
+/**
+ * Drive the login state machine
+ * @param {Object} result - LoginResult returned by login() / solveCaptcha() / submitVerifyCode()
+ */
+async function handleLoginResult(result) {
+    switch (result.status) {
+        case sdk.LoginStatus.Ok:
+            utils.log('✓ Successfully connected to Eufy!', 'info');
+            await loadDevices();
+            loggedIn = true;
+            loginState = { status: 'ok' };
+            broadcastSystemEvent('login ok');
+            break;
+        case sdk.LoginStatus.Captcha:
+            loginState = { status: 'captcha', image: result.image };
+            utils.log('🔐 Eufy requires a captcha - waiting for user input in the web UI.', 'warn');
+            broadcastSystemEvent('captcha request', { image: result.image });
+            break;
+        case sdk.LoginStatus.TwoFactor:
+            loginState = { status: '2fa', method: result.method };
+            utils.log(`🔐 Eufy requires a 2FA code (${result.method}) - waiting for user input in the web UI.`, 'warn');
+            broadcastSystemEvent('verify code request', { method: result.method });
+            break;
+        default:
+            throw new Error(`Unexpected login status: ${JSON.stringify(result)}`);
+    }
+}
 
-    // Vehicle detection event
-    device.on("vehicle detected", (device, state) => {
-        utils.log(`Vehicle detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'vehicle detected',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
+/**
+ * Submit captcha answer from the web UI
+ * @param {string} answer - Captcha text
+ */
+async function setCaptcha(answer) {
+    if (!eufyClient || loginState.status !== 'captcha') throw new Error('No captcha requested');
+    await handleLoginResult(await eufyClient.solveCaptcha(answer));
+}
 
-    // General sound detection event
-    device.on("sound detected", (device, state) => {
-        utils.log(`Sound detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'sound detected',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
+/**
+ * Submit 2FA verification code from the web UI
+ * @param {string} code - Verification code
+ */
+async function setVerifyCode(code) {
+    if (!eufyClient || loginState.status !== '2fa') throw new Error('No verification code requested');
+    await handleLoginResult(await eufyClient.submitVerifyCode(code));
+}
 
-    // Doorbell ring event
-    device.on("rings", (device, state) => {
-        utils.log(`Doorbell rang on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'rings',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
+/**
+ * Load all devices of the account after a successful login
+ */
+async function loadDevices() {
+    stations.clear();
+    devices.clear();
+    for (const info of await eufyClient.getDevices()) {
+        try {
+            addDevice(await eufyClient.getDevice(info.sn), info);
+        } catch (error) {
+            utils.log(`❌ Failed to load device ${info.sn}: ${error.message}`, 'error');
+        }
+    }
+}
 
-    // Package delivery events
-    device.on("package delivered", (device, state) => {
-        utils.log(`Package delivered detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'package delivered',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-    device.on("package stranded", (device, state) => {
-        utils.log(`Package stranded detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'packet stranded',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-    device.on("package taken", (device, state) => {
-        utils.log(`Package taken detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'package taken',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
+/**
+ * Add Device
+ * Registers a discovered device and derives its station
+ * @param {Device} device - SDK device object
+ * @param {Object} [info] - Cloud device info (name, stationSn)
+ */
+function addDevice(device, info) {
+    const sn = device.sn;
+    utils.log(`📷 Device found: ${(info && info.name) || ''} (${sn})`, 'debug');
+    devices.set(sn, device);
+    if (info) deviceInfo.set(sn, info);
+    stationSnByDevice.set(sn, (info && info.stationSn) || sn);
+    stations.add(stationSnByDevice.get(sn));
+}
+const stationSnByDevice = new Map();
+const deviceInfo = new Map();                 // Serial number -> cloud device info (name, model, stationSn)
 
-    // Loitering detection event
-    device.on("someone loitering", (device, state) => {
-        utils.log(`Loitering detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'someone loitering',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
+/**
+ * Device name by serial number (empty if the device has none)
+ * @param {string} sn - Device serial number
+ * @returns {string} Name or ''
+ */
+function getDeviceName(sn) {
+    const info = deviceInfo.get(sn);
+    return (info && info.name) || '';
+}
 
-    // Radar motion detection event
-    device.on("radar motion detected", (device, state) => {
-        utils.log(`Radar motion detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'radar motion detected',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    // Door/window open event
-    device.on("open", (device, state) => {
-        utils.log(`Open event on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'open',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    // Alarm events
-    device.on("911 alarm", (device, state, detail) => {
-        utils.log(`911 alarm on device: ${device.getName()} (${device.getSerial()}) - State: ${state} - Detail: ${detail}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: '911 alarm',
-                serialNumber: device.getSerial(),
-                state: state,
-                detail: detail
-            }
-        });
-    });
-    device.on("shake alarm", (device, state, detail) => {
-        utils.log(`Shake alarm on device: ${device.getName()} (${device.getSerial()}) - State: ${state} - Detail: ${detail}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'shake alarm',
-                serialNumber: device.getSerial(),
-                state: state,
-                detail: detail
-            }
-        });
-    });
-    device.on("wrong try-protect alarm", (device, state) => {
-        utils.log(`Wrong try-protect alarm on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'wrong try-protect alarm',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    // Lock-related events
-    device.on("long time not close", (device, state) => {
-        utils.log(`Long time not close alarm on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'long time not close',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-    device.on("jammed", (device, state) => {
-        utils.log(`Jammed alarm on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'jammed',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    // Battery status event
-    device.on("low battery", (device, state) => {
-        utils.log(`Low battery on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'low battery',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    // Lock state changed event
-    device.on("locked", (device, state) => {
-        utils.log(`Locked state changed on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'locked',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    // AI-based detection events
-    device.on("stranger person detected", (device, state) => {
-        utils.log(`Stranger person detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'stranger person detected',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-    device.on("dog detected", (device, state) => {
-        utils.log(`Dog detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'dog detected',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-    device.on("dog lick detected", (device, state) => {
-        utils.log(`Dog lick detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'dog lick detected',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-    device.on("dog poop detected", (device, state) => {
-        utils.log(`Dog poop detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'dog poop detected',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    /**
-     * Property Changed Event
-     * Handles property changes on device and updates clients
-     * Special handling for picture property to provide latest snapshots
-     */
-    device.on("property changed", (device, name, value, ready) => {
-        if (ready && !name.startsWith("hidden-")) {
-            utils.log(`Property changed on device: ${device.getName()} (${device.getSerial()}) - ${name}: ${JSON.stringify(value)}`, 'debug');
-
-            // Check if a newer snapshot is available for picture property
-            value = checkDevicePictureProperty(device.getSerial(), value);
-
-            wsApi.wsBroadcast({
-                type: 'event',
-                event: {
-                    source: "device",
-                    event: 'property changed',
-                    serialNumber: device.getSerial(),
-                    name: name,
-                    value: value
-                }
-            });
-
-        } else utils.log(`Property changed on device: ${device.getName()} (${device.getSerial()}) - ${name}: ${JSON.stringify(value)} (not ready)`, 'debug');
-    });
-
-    // Tampering detection event
-    device.on("tampering", (device, state) => {
-        utils.log(`Tampering detected on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'tampering',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    // Temperature warning events
-    device.on("low temperature", (device, state) => {
-        utils.log(`📉 Low temperature on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'low temperature',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-    device.on("high temperature", (device, state) => {
-        utils.log(`📈 High temperature on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'high temperature',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    // Smart lock specific events
-    device.on("pin incorrect", (device, state) => {
-        utils.log(`❌ Incorrect PIN entered on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'pin incorrect',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    // Lid/cover stuck event (e.g., pet feeder)
-    device.on("lid stuck", (device, state) => {
-        utils.log(`⚠️ Lid stuck on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'lid stuck',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
-    });
-
-    // Battery fully charged event
-    device.on("battery fully charged", (device, state) => {
-        utils.log(`🔋 Battery fully charged on device: ${device.getName()} (${device.getSerial()}) - State: ${state}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "device",
-                event: 'battery fully charged',
-                serialNumber: device.getSerial(),
-                state: state
-            }
-        });
+/**
+ * Serial numbers of all devices in a stable order: by name (case-insensitive, numbers natural),
+ * devices without a name last, ties by serial number. The SDK's own order changes between runs.
+ * @returns {string[]} Sorted serial numbers
+ */
+function getSortedDeviceSerials() {
+    return Array.from(devices.keys()).sort((a, b) => {
+        const nameA = getDeviceName(a);
+        const nameB = getDeviceName(b);
+        if (!nameA !== !nameB) return nameA ? -1 : 1;
+        return nameA.localeCompare(nameB, undefined, { sensitivity: 'base', numeric: true }) || a.localeCompare(b);
     });
 }
 
 /**
- * Add Station
- * Registers a newly discovered station and sets up all event handlers
- * Broadcasts station events to WebSocket clients for real-time notifications
- * @param {Station} station - Eufy station object
+ * Serial number -> name for all devices that have one
+ * @returns {Object} Map of serial number to name
  */
-function addStation(station) {
-    utils.log('🏠 Station found: ' + station.getName() + ' (' + station.getSerial() + ')', 'debug');
-    stations.add(station);
+function getDeviceNames() {
+    const names = {};
+    for (const sn of devices.keys()) {
+        const name = getDeviceName(sn);
+        if (name) names[sn] = name;
+    }
+    return names;
+}
 
-    /**
-     * Station Event Handlers
-     * Register handlers for all station events and broadcast to WebSocket clients
-     */
+/**
+ * Presets stored on a pan/tilt camera (the camera reports 10 slots, the used ones are "enabled")
+ * @param {Device} device - SDK device object with the ptz capability
+ * @returns {Promise<Array<{id: number, isDefault: boolean}>|null>} Used presets, null if they cannot be read
+ */
+async function getStoredPresets(device) {
+    const info = deviceInfo.get(device.sn);
+    const stationSn = (info && info.stationSn) || device.sn;
 
-    // Station connection events
-    station.on("connect", () => {
-        utils.log(`✓ Station connected: ${station.getName()} (${station.getSerial()})`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'connect',
-                serialNumber: station.getSerial()
-            }
-        });
-    });
-    station.on("close", () => {
-        utils.log(`⚠️ Station connection closed: ${station.getName()} (${station.getSerial()})`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'close',
-                serialNumber: station.getSerial()
-            }
-        });
-    });
-    station.on("connection error", () => {
-        utils.log(`❌ Station connection error: ${station.getName()} (${station.getSerial()})`, 'warn');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'connection error',
-                serialNumber: station.getSerial()
-            }
-        });
-    });
+    // The station's answer is not tied to the request: two lists in flight at once (two cameras of one
+    // station) both get the first answer. So one list at a time per station.
+    const previous = presetQueues.get(stationSn) || Promise.resolve();
+    const result = previous.catch(() => { }).then(() => readPresets(device));
+    presetQueues.set(stationSn, result);
+    return result;
+}
 
-    // Station mode change events
-    station.on("guard mode", (station, guardMode) => {
-        utils.log(`Station guard mode changed: ${station.getName()} (${station.getSerial()}) - Guard Mode: ${guardMode}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'guard mode',
-                serialNumber: station.getSerial(),
-                guardMode: guardMode
-            }
-        });
-    });
-    station.on("current mode", (station, currentMode) => {
-        utils.log(`Station current mode changed: ${station.getName()} (${station.getSerial()}) - Current Mode: ${currentMode}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'current mode',
-                serialNumber: station.getSerial(),
-                currentMode: currentMode
-            }
-        });
-    });
+const presetQueues = new Map();   // station serial -> promise chain of preset list requests
 
-    // Alarm event
-    station.on("alarm event", (station, alarmEvent) => {
-        utils.log(`Station alarm event: ${station.getName()} (${station.getSerial()}) - Alarm Event: ${alarmEvent}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'alarm event',
-                serialNumber: station.getSerial(),
-                alarmEvent: alarmEvent
-            }
-        });
-    });
+/**
+ * Read the preset list of a camera (one request, see getStoredPresets for the queue)
+ * @param {Device} device - SDK device object with the ptz capability
+ * @returns {Promise<Array<{id: number, isDefault: boolean}>|null>} Used presets, null if they cannot be read
+ */
+async function readPresets(device) {
+    try {
+        const ptz = device.ptz && device.ptz();
+        const preset = ptz && ptz.preset();
+        if (!preset || !preset.list) return null;
 
-    // RTSP stream URL event
-    station.on("rtsp url", (station, channel, value) => {
-        utils.log(`Station RTSP URL received: ${station.getName()} (${station.getSerial()}) - Channel: ${channel} - URL: ${value}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'rtsp url',
-                serialNumber: station.getSerial(),
-                channel: channel,
-                value: value
-            }
-        });
-    });
+        await eufyClient.connectStation(device.sn);
+        const list = await Promise.race([
+            preset.list(),
+            new Promise((resolve, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+        ]);
+        return (list || [])
+            .filter(p => p.raw && p.raw.enable === 1)
+            .map(p => ({ id: p.id, isDefault: p.raw.isdefault === 1 }))
+            .sort((a, b) => a.id - b.id);
+    } catch (error) {
+        utils.log(`Presets of ${device.sn} not readable: ${error.message}`, 'debug');
+        return null;
+    }
+}
 
-    /**
-     * Command Result Event
-     * Handles results from station commands
-     * Special handling for livestream stop (1004) to restart if clients still connected
-     */
-    station.on("command result", (station, result) => {
-        utils.log(`Station command result: ${station.getName()} (${station.getSerial()}) - ${JSON.stringify(result)}`, 'debug');
+/**
+ * Get Stored Picture
+ * Latest push thumbnail retained by the SDK, in the format of the old 'picture' property
+ * @param {Device} device - SDK device object
+ * @param {boolean} [fresh] - Skip the persisted fallback (only a picture the SDK holds counts)
+ * @returns {Promise<Object|null>} { data: Buffer, type: { ext, mime } } or null if none retained
+ */
+async function getStoredPicture(device, fresh = false) {
+    const file = path.join(EVENT_PICTURE_DIR, `${device.sn}.jpg`);
+    const type = { ext: 'jpg', mime: 'image/jpeg' };
 
-        // Handle livestream stop command (e.g., due to resolution change)
-        if (result.command_type === 1004 && currentStreamingSN) {
-            // Handle livestream_stop forced by station
-            if (utils.getActiveStreamClients().size !== 0) {
-                // TODO: works not yet properly, needs testing and fixing - perhaps better to close all clients instead? so they can reconnect properly
-
-                utils.log('⚠️ Warning: Livestream stopped, but there are still active clients', 'warn');
-                utils.log(`   Active clients: ${utils.getActiveStreamClients().size}`, 'debug');
-                utils.log(`   Current device: ${currentStreamingSN}`, 'debug');
-                utils.log(`   FFmpeg transcoding active: ${transcode.isTranscoding}`, 'debug');
-                utils.log(`   Has init segment: ${transcode.hasInitSegment}`, 'debug');
-
-                // transcode.clearMetadata();
-                startStreamForDevice(currentStreamingSN);
-
-                // setTimeout(() => {
-                //     utils.log('🔄 Restarting livestream for device after stop command...', 'info');
-                //     // transcode.clearMetadata();
-                //     startStreamForDevice(currentStreamingSN);
-                // }, 1000);
-
-                utils.log(`🔄 Stream restart initiated at ${Date.now()}`, 'debug');
+    try {
+        const camera = device.camera && device.camera();
+        if (camera && camera.snapshotStored) {
+            const data = await camera.snapshotStored();
+            if (data) {
+                // The SDK cache lives in memory only - keep the last picture across restarts
+                try {
+                    fs.mkdirSync(EVENT_PICTURE_DIR, { recursive: true });
+                    fs.writeFileSync(file, data);
+                } catch (error) {
+                    utils.log(`❌ Failed to persist event picture for ${device.sn}: ${error.message}`, 'warn');
+                }
+                return { data, type };
             }
         }
+    } catch (error) {
+        // StoredSnapshotUnavailableError: not-observed / pending / download-failed / invalid-image
+        utils.log(`No stored picture for device ${device.sn}: ${error.reason || error.message}`, 'debug');
+    }
 
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'command result',
-                serialNumber: station.getSerial(),
-                command: result.command_type,
-                returnCode: result.return_code,
-                customData: result.customData
-            }
-        });
-    });
+    // Fallback: picture persisted from an earlier event
+    if (fresh) return null;
+    try {
+        if (fs.existsSync(file)) return { data: fs.readFileSync(file), type };
+    } catch (error) {
+        utils.log(`❌ Failed to read persisted event picture for ${device.sn}: ${error.message}`, 'warn');
+    }
+    return null;
+}
 
-    /**
-     * Property Changed Event
-     * Handles property changes on station and updates clients
-     */
-    station.on("property changed", (station, name, value, ready) => {
-        if (ready && !name.startsWith("hidden-")) {
-            utils.log(`Property changed on station: ${station.getName()} (${station.getSerial()}) - ${name}: ${JSON.stringify(value)}`, 'debug');
-            wsApi.wsBroadcast({
-                type: 'event',
-                event: {
-                    source: "station",
-                    event: 'property changed',
-                    serialNumber: station.getSerial(),
-                    name: name,
-                    value: value
-                }
-            });
-        } else utils.log(`Property changed on station: ${station.getName()} (${station.getSerial()}) - ${name}: ${JSON.stringify(value)} (not ready)`, 'debug');
-    });
+// Picture fingerprint per device, to broadcast each thumbnail only once
+const lastPictureHash = new Map();
 
-    // Alarm delay events
-    station.on("alarm delay event", (station, alarmDelayEvent, alarmDelay) => {
-        utils.log(`Station alarm delay event: ${station.getName()} (${station.getSerial()}) - Event: ${alarmDelayEvent} - Delay: ${alarmDelay}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'alarm delay event',
-                serialNumber: station.getSerial(),
-                alarmDelayEvent: alarmDelayEvent,
-                alarmDelay: alarmDelay
-            }
-        });
-    });
-    station.on("alarm armed event", (station) => {
-        utils.log(`Station alarm armed: ${station.getName()} (${station.getSerial()})`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'alarm armed event',
-                serialNumber: station.getSerial()
-            }
-        });
-    });
-    station.on("alarm arm delay event", (station, armDelay) => {
-        utils.log(`Station alarm arm delay event: ${station.getName()} (${station.getSerial()}) - Delay: ${armDelay}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'alarm arm delay event',
-                serialNumber: station.getSerial(),
-                armDelay: armDelay
-            }
-        });
-    });
+/**
+ * Broadcast the stored picture of a device after a detection event.
+ * The thumbnail is downloaded asynchronously after the push arrives, so retry a few times.
+ * @param {string} sn - Device serial number
+ */
+async function broadcastStoredPicture(sn) {
+    const device = devices.get(sn);
+    if (!device) return;
 
-    // Device PIN verification event
-    station.on("device pin verified", (deviceSN, successfull) => {
-        utils.log(`Device PIN verified: ${deviceSN} - Successful: ${successfull}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'device pin verified',
-                serialNumber: station.getSerial(),
-                deviceSN: deviceSN,
-                successful: successfull
-            }
-        });
-    });
+    // Try the SDK's push thumbnail first; if it does not arrive, ask the station for its newest event
+    // (the event is written to the station's history once its recording started)
+    for (const delay of [0, 2000, 4000, 8000, 15000, 30000]) {
+        if (delay) await new Promise(resolve => setTimeout(resolve, delay));
 
-    // Database query events
-    station.on("database query latest", (station, returnCode, data) => {
-        utils.log(`Database query latest on station: ${station.getName()} (${station.getSerial()}) - Return Code: ${returnCode} - Data: ${JSON.stringify(data)}`, 'debug');
-        wsApi.wsBroadcast({
-            type: 'event',
-            event: {
-                source: "station",
-                event: 'database query latest',
-                serialNumber: station.getSerial(),
-                data: data
+        let picture = await getStoredPicture(device, true);
+        if (!picture && delay >= 8000) {
+            try {
+                picture = await events.refreshLatestEventPicture(sn);
+            } catch (error) {
+                utils.log(`No station event picture for ${sn}: ${error.message}`, 'debug');
             }
-        });
+        }
+        if (!picture) continue;
+
+        if (broadcastPicture(sn, picture)) return;
+    }
+}
+
+/**
+ * Broadcast a new event picture of a device (once per distinct image)
+ * @param {string} sn - Device serial number
+ * @param {Object} picture - { data: Buffer, type: { ext, mime } }
+ * @returns {boolean} True if it was sent
+ */
+function broadcastPicture(sn, picture) {
+    const hash = utils.generateChecksum(picture.data);
+    if (lastPictureHash.get(sn) === hash) return false;   // still the previous event's image
+    lastPictureHash.set(sn, hash);
+
+    broadcastDeviceEvent('property changed', sn, {
+        name: 'picture',
+        value: checkDevicePictureProperty(sn, picture)
     });
-    // station.on("database query local", (station, returnCode, data) => {
-    //     utils.log(`Database query local on station: ${station.getName()} (${station.getSerial()}) - Return Code: ${returnCode} - Data: ${JSON.stringify(data)}`, 'info');
-    // });
-    // station.on("database count by date", (station, returnCode, data) => {
-    //     utils.log(`Database count by date on station: ${station.getName()} (${station.getSerial()}) - Return Code: ${returnCode} - Data: ${JSON.stringify(data)}`, 'info');
-    // });
-    // station.on("database delete", (station, returnCode, failedIds) => {
-    //     utils.log(`Database delete on station: ${station.getName()} (${station.getSerial()}) - Return Code: ${returnCode} - Failed IDs: ${failedIds.join(', ')}`, 'info');
-    // });
+    return true;
+}
+
+/**
+ * Look up the newest event picture on the station in the background and send it if it is newer than
+ * the one the UI got with the properties.
+ * @param {string} sn - Device serial number
+ */
+function refreshEventPictureInBackground(sn) {
+    events.refreshLatestEventPicture(sn)
+        .then(picture => { if (picture) broadcastPicture(sn, picture); })
+        .catch(error => utils.log(`No station event picture for ${sn}: ${error.message}`, 'debug'));
+}
+
+/**
+ * Handle Device Event
+ * Translates SDK semantic events into the event names the web UI knows and broadcasts them
+ * @param {Object} e - Semantic event tagged with eventName
+ */
+function handleDeviceEvent(e) {
+    const sn = e.deviceSn;
+
+    switch (e.eventName) {
+        case 'propertyChanged':
+            utils.log(`Property changed on device ${sn} - ${e.property}: ${JSON.stringify(e.value)}`, 'debug');
+            broadcastDeviceEvent('property changed', sn, { name: e.property, value: e.value });
+            return;
+        case 'dogDetected': {
+            const name = e.kind === 'lick' ? 'dog lick detected' : e.kind === 'poop' ? 'dog poop detected' : 'dog detected';
+            broadcastDeviceEvent(name, sn, { state: true });
+            return;
+        }
+        case 'lockState':
+            broadcastDeviceEvent('locked', sn, { state: true });
+            return;
+        case 'contactState':
+            broadcastDeviceEvent('open', sn, { state: e.open === true });
+            return;
+    }
+
+    const legacyName = EVENT_NAME_MAP[e.eventName];
+    if (legacyName) {
+        utils.log(`${legacyName} on device ${sn}`, 'debug');
+        broadcastDeviceEvent(legacyName, sn, { state: true });
+        broadcastStoredPicture(sn).catch(error =>
+            utils.log(`❌ Failed to broadcast picture for ${sn}: ${error.message}`, 'error'));
+    } else {
+        utils.log(`Unmapped Eufy event '${e.eventName}' on device ${sn}`, 'trace');
+    }
 }
 
 /**
@@ -909,28 +513,103 @@ function addStation(station) {
  * @param {string} serialNumber - Device serial number to start streaming
  */
 async function startStreamForDevice(serialNumber) {
-    currentStreamingSN = null;
-
     // Verify Eufy client is connected
     if (!isConnected()) {
+        currentStreamingSN = null;
         utils.log('❌ Eufy client is not connected. Cannot start livestream.', 'error');
         return;
     }
 
-    utils.log(`📲 Starting livestream for device: ${serialNumber}`, 'debug');
-    const device = await eufyClient.getDevice(serialNumber);
-    const station = await eufyClient.getStation(device.getStationSerial());
-
-    // Check if stream is already active
-    if (station.isLiveStreaming(device)) {
-        utils.log(`ℹ️ Livestream for device ${device.getName()} (${device.getSerial()}) is already active.`, 'warn');
-        currentStreamingSN = serialNumber;
+    // Already streaming this device
+    if (activeStream && currentStreamingSN === serialNumber) {
+        utils.log(`ℹ️ Livestream for device ${serialNumber} is already active.`, 'warn');
         return;
     }
 
-    station.startLivestream(device);
+    // Only one stream at a time (single transcoder)
+    if (activeStream) stopActiveStream();
+    currentStreamingSN = null;
+
+    utils.log(`📲 Starting livestream for device: ${serialNumber}`, 'debug');
+    const device = devices.get(serialNumber) || await eufyClient.getDevice(serialNumber);
+    const camera = device.camera && device.camera();
+    if (!camera || !camera.live) {
+        utils.log(`❌ Device ${serialNumber} has no livestream capability.`, 'error');
+        return;
+    }
+
     currentStreamingSN = serialNumber;
-    utils.log(`▶️ Livestream request sent for device: ${device.getName()} (${device.getSerial()})`, 'info');
+    let stream;
+    try {
+        stream = await camera.live();
+    } catch (error) {
+        currentStreamingSN = null;
+        utils.log(`❌ Failed to start livestream for ${serialNumber}: ${error.message}`, 'error');
+        return;
+    }
+    activeStream = stream;
+
+    // Coded video configuration (changes mid-session, authority for geometry)
+    let videoConfig = { codec: 'h264', width: 0, height: 0 };
+
+    stream.on('video-config', (config) => {
+        videoConfig = config;
+    });
+
+    stream.on('video', (frame) => {
+        utils.log(`📹 Video frame received - Size: ${frame.data.length} bytes`, 'trace');
+        transcode.handleVideoData(frame.data, {
+            videoCodec: frame.codec === 'h264' ? 'H264' : 'HEVC',
+            videoFPS: 0,    // not reported by the SDK
+            videoHeight: videoConfig.height || frame.height,
+            videoWidth: videoConfig.width || frame.width,
+        });
+    });
+
+    stream.on('audio', (frame) => {
+        // ffmpeg input is ADTS AAC, G.711 is not supported by the pipeline
+        if (frame.codec !== 'aac-lc' && frame.codec !== 'aac-eld') return;
+        utils.log(`🎵 Audio frame received - Size: ${frame.data.length} bytes`, 'trace');
+        transcode.handleAudioData(frame.data, { audioCodec: 'AAC' });
+    });
+
+    stream.on('error', (error) => {
+        utils.log(`❌ Livestream error for ${serialNumber}: ${error && error.message ? error.message : error}`, 'error');
+    });
+
+    stream.on('stop', () => {
+        utils.log(`⏹️ Livestream stopped for device: ${serialNumber}`, 'debug');
+        if (activeStream !== stream) return; // stopped by us (stop/switch)
+        activeStream = null;
+
+        // Source ended while clients are still watching (e.g. connection issues)
+        if (utils.getActiveStreamClients().size !== 0) {
+            utils.log('⚠️ Warning: Livestream stopped, but there are still active clients', 'warn');
+            transcode.stopTranscoding();
+
+            const currentClients = utils.getActiveStreamClients();
+            broadcastSystemEvent('stream_stopped_by_station', { serialNumber });
+            currentClients.forEach(client => client.response.end());
+        }
+        if (currentStreamingSN === serialNumber) currentStreamingSN = null;
+    });
+
+    utils.log(`▶️ Livestream started for device: ${serialNumber}`, 'info');
+}
+
+/**
+ * Detach and forget the active livestream consumer
+ */
+function stopActiveStream() {
+    const stream = activeStream;
+    activeStream = null;
+    if (stream) {
+        try {
+            stream.stop();
+        } catch (error) {
+            utils.log(`❌ Error stopping livestream: ${error.message}`, 'error');
+        }
+    }
 }
 
 /**
@@ -939,25 +618,15 @@ async function startStreamForDevice(serialNumber) {
  * @param {string} serialNumber - Device serial number to stop streaming
  */
 async function stopStreamForDevice(serialNumber) {
-    // Verify Eufy client is connected
-    if (!isConnected()) {
-        utils.log('❌ Eufy client is not connected. Cannot stop livestream.', 'error');
+    if (!activeStream || currentStreamingSN !== serialNumber) {
+        utils.log(`ℹ️ Livestream for device ${serialNumber} is not active, no stop required.`, 'warn');
         return;
     }
 
     utils.log(`📲 Stopping livestream for device: ${serialNumber}`, 'debug');
-    const device = await eufyClient.getDevice(serialNumber);
-    const station = await eufyClient.getStation(device.getStationSerial());
-
-    // Check if stream is actually active
-    if (!station.isLiveStreaming(device)) {
-        utils.log(`ℹ️ Livestream for device ${device.getName()} (${device.getSerial()}) is not active, no stop required.`, 'warn');
-        return;
-    }
-
-    station.stopLivestream(device);
+    stopActiveStream();
     currentStreamingSN = null;
-    utils.log(`⏹️ Livestream stop request sent for device: ${device.getName()} (${device.getSerial()})`, 'info');
+    utils.log(`⏹️ Livestream stop request sent for device: ${serialNumber}`, 'info');
 }
 
 /**
@@ -973,83 +642,79 @@ function registerWebSocketHandlers() {
 
     /**
      * start_listening Command
-     * Returns current system state with stations and devices
+     * Returns current system state with stations, devices and login state.
+     * Stays successful while login is pending so the UI can show the captcha / 2FA dialog.
      */
     wsApi.registerMessageHandler('start_listening', (message, ws) => {
-        if (!isConnected()) { ws.close(); }
-
         return {
             type: 'result',
             messageId: 'start_listening',
-            success: isConnected(),
+            success: true,
             result: {
                 state: {
                     client: {
                         version: eufyVersion,
                     },
-                    stations: Array.from(stations).map(station => station.getSerial()),
-                    devices: Array.from(devices).map(device => device.getSerial())
+                    login: getLoginState(),
+                    stations: Array.from(stations),
+                    devices: getSortedDeviceSerials(),
+                    deviceNames: getDeviceNames()
                 }
             }
         };
     });
 
     /**
+     * driver.set_captcha / driver.set_verify_code Commands
+     * Answers for a pending login
+     */
+    wsApi.registerMessageHandler('driver.set_captcha', async (message) => {
+        try {
+            await setCaptcha(message.captcha);
+            return { type: 'result', messageId: 'driver.set_captcha', success: true, result: { login: getLoginState() } };
+        } catch (error) {
+            utils.log(`❌ Captcha error: ${error.message}`, 'error');
+            return { type: 'result', messageId: 'driver.set_captcha', success: false, errorCode: error.message };
+        }
+    });
+
+    wsApi.registerMessageHandler('driver.set_verify_code', async (message) => {
+        try {
+            await setVerifyCode(message.verifyCode);
+            return { type: 'result', messageId: 'driver.set_verify_code', success: true, result: { login: getLoginState() } };
+        } catch (error) {
+            utils.log(`❌ Verify code error: ${error.message}`, 'error');
+            return { type: 'result', messageId: 'driver.set_verify_code', success: false, errorCode: error.message };
+        }
+    });
+
+    /**
      * station.get_properties Command
-     * Returns all properties for a specific station
+     * The SDK has no station objects, but a station is a regular device of the account
      */
     wsApi.registerMessageHandler('station.get_properties', async (message, ws) => {
-        if (!isConnected()) { ws.close(); }
-
-        const station = await eufyClient.getStation(message.serialNumber);
-        const properties = station.getProperties();
+        const device = devices.get(message.serialNumber);
+        const { properties, meta } = device ? buildDeviceProperties(device, deviceInfo.get(device.sn)) : { properties: {}, meta: { groups: [] } };
         return {
             type: 'result',
             messageId: 'station.get_properties',
             success: true,
             result: {
-                serialNumber: station.getSerial(),
-                properties: properties
+                serialNumber: message.serialNumber,
+                properties: properties,
+                meta: meta
             }
         };
     });
 
-    /**
-     * station.download_image Command
-     * Downloads an image from station (async operation)
-     */
-    wsApi.registerMessageHandler('station.download_image', async (message, ws) => {
-        if (!isConnected()) { ws.close(); }
-
-        const station = await eufyClient.getStation(message.serialNumber);
-        station.downloadImage(message.file);
-        return {
-            type: "result",
-            success: true,
-            messageId: "station.download_image",
-            result: {
-                async: true
-            }
-        };
-    });
-
-    /**
-     * station.database_query_latest_info Command
-     * Queries latest database info from station (async operation)
-     */
-    wsApi.registerMessageHandler('station.database_query_latest_info', async (message, ws) => {
-        if (!isConnected()) { ws.close(); }
-
-        const station = await eufyClient.getStation(message.serialNumber);
-        station.databaseQueryLatestInfo();
-        return {
-            type: "result",
-            success: true,
-            messageId: "station.database_query_latest_info",
-            result: {
-                async: true
-            }
-        };
+    // Not supported by the SDK yet - answer so the UI does not wait
+    ['station.download_image', 'station.database_query_latest_info'].forEach(command => {
+        wsApi.registerMessageHandler(command, async () => ({
+            type: 'result',
+            messageId: command,
+            success: false,
+            errorCode: 'not supported'
+        }));
     });
 
     /**
@@ -1060,57 +725,109 @@ function registerWebSocketHandlers() {
     wsApi.registerMessageHandler('device.get_properties', async (message, ws) => {
         if (!isConnected()) { ws.close(); }
 
-        const device = await eufyClient.getDevice(message.serialNumber);
-        const properties = device.getProperties();
+        const device = devices.get(message.serialNumber) || await eufyClient.getDevice(message.serialNumber);
+        // Plain values under SDK names plus the SDK's description of them (labels, units, enum texts)
+        const { properties, meta } = buildDeviceProperties(device, deviceInfo.get(device.sn));
+
+        // Latest event thumbnail retained by the SDK (replaces the old 'picture' property)
+        const picture = await getStoredPicture(device);
+        if (picture) properties.picture = picture;
 
         // Check if a newer snapshot is available for picture property
-        properties.picture = checkDevicePictureProperty(device.getSerial(), properties.picture);
+        properties.picture = checkDevicePictureProperty(device.sn, properties.picture);
+
+        // The station may know a newer event than the stored picture; it is sent as a picture update
+        if (deviceInfo.has(device.sn) && device.camera && device.camera()) {
+            refreshEventPictureInBackground(device.sn);
+        }
 
         return {
             type: 'result',
             messageId: 'device.get_properties',
             success: true,
             result: {
-                serialNumber: device.getSerial(),
-                properties: properties
+                serialNumber: device.sn,
+                properties: properties,
+                meta: meta
             }
         };
     });
 
     /**
+     * device.get_events Command
+     * Events of one day (default today) from the station's history, newest first
+     * message: { serialNumber, date: 'YYYYMMDD' }
+     */
+    wsApi.registerMessageHandler('device.get_events', async (message, ws) => {
+        if (!isConnected()) { ws.close(); }
+
+        try {
+            const date = message.date ? String(message.date) : undefined;
+            const list = await events.getEvents(message.serialNumber, date);
+            return {
+                type: 'result',
+                messageId: 'device.get_events',
+                success: true,
+                result: { serialNumber: message.serialNumber, date: date || null, events: list }
+            };
+        } catch (error) {
+            utils.log(`❌ Failed to read events of ${message.serialNumber}: ${error.message}`, 'error');
+            return {
+                type: 'result',
+                messageId: 'device.get_events',
+                success: false,
+                errorCode: error.message,
+                result: { serialNumber: message.serialNumber, date: message.date || null, events: [] }
+            };
+        }
+    });
+
+    /**
      * device.get_commands Command
-     * Returns all available commands for a specific device
+     * Derives the command names the UI looks for from the device capabilities
      */
     wsApi.registerMessageHandler('device.get_commands', async (message, ws) => {
         if (!isConnected()) { ws.close(); }
 
-        const device = await eufyClient.getDevice(message.serialNumber);
-        const result = device.getCommands();
+        const device = devices.get(message.serialNumber) || await eufyClient.getDevice(message.serialNumber);
+        const commands = [];
+        const camera = device.camera && device.camera();
+        if (camera && camera.live) commands.push('deviceStartLivestream', 'deviceStopLivestream');
+        let presets = null;
+        if (device.has && device.has('ptz')) {
+            commands.push('devicePanAndTilt', 'devicePresetPosition');
+            presets = await getStoredPresets(device);
+        }
+
         return {
             type: 'result',
             messageId: 'device.get_commands',
             success: true,
             result: {
-                serialNumber: device.getSerial(),
-                commands: result
+                serialNumber: device.sn,
+                commands: commands,
+                presets: presets
             }
         };
     });
 
     /**
      * device.preset_position Command
-     * Moves PTZ camera to a preset position
+     * Moves PTZ camera to a stored preset position
      */
     wsApi.registerMessageHandler('device.preset_position', async (message, ws) => {
         if (!isConnected()) { ws.close(); }
 
-        const device = await eufyClient.getDevice(message.serialNumber);
-        const station = await eufyClient.getStation(device.getStationSerial());
         try {
-            station.presetPosition(device, message.position)
-        }
-        catch (error) {
-            utils.log(`❌ Error presetting position for device ${device.getName()} (${device.getSerial()}): ${error.message}`, 'error');
+            const device = devices.get(message.serialNumber) || await eufyClient.getDevice(message.serialNumber);
+            const ptz = device.ptz && device.ptz();
+            if (!ptz) throw new Error('not supported');
+            // 'preview' sends the command the old client used for these cameras (6035, {value: slot}) and is
+            // the one that moves a camera behind a HomeBase; 'goto' (6032) did nothing on a T8425
+            const preset = ptz.preset();
+            await (preset.preview ? preset.preview(message.position) : preset.goto(message.position));
+        } catch (error) {
+            utils.log(`❌ Error presetting position for device ${message.serialNumber}: ${error.message}`, 'error');
             return {
                 type: "result",
                 success: false,
@@ -1118,7 +835,7 @@ function registerWebSocketHandlers() {
                 errorCode: error.message,
                 value: message.position
             };
-        };
+        }
         return {
             type: "result",
             success: true,
@@ -1136,9 +853,23 @@ function registerWebSocketHandlers() {
     wsApi.registerMessageHandler('device.pan_and_tilt', async (message, ws) => {
         if (!isConnected()) { ws.close(); }
 
-        const device = await eufyClient.getDevice(message.serialNumber);
-        const station = await eufyClient.getStation(device.getStationSerial());
-        station.panAndTilt(device, message.direction);
+        try {
+            const device = devices.get(message.serialNumber) || await eufyClient.getDevice(message.serialNumber);
+            const ptz = device.ptz && device.ptz();
+            if (!ptz) throw new Error('not supported');
+            // UI sends the legacy numeric directions (1=left, 2=right, 3=up, 4=down)
+            const direction = PTZ_DIRECTIONS[message.direction];
+            if (!direction) throw new Error('unsupported direction');
+            await ptz.rotate(direction);
+        } catch (error) {
+            utils.log(`❌ Error moving device ${message.serialNumber}: ${error.message}`, 'error');
+            return {
+                type: "result",
+                success: false,
+                messageId: "device.pan_and_tilt",
+                errorCode: error.message
+            };
+        }
         return {
             type: "result",
             success: true,
@@ -1163,6 +894,26 @@ function registerWebSocketHandlers() {
  */
 function checkDevicePictureProperty(deviceSN, properties) {
     try {
+        // No event picture (e.g. after a restart, the SDK keeps them in memory only):
+        // fall back to the latest snapshot saved from a video stream
+        if (!properties || !properties.data) {
+            const snapshot = utils.loadSnapshotFromDisk(deviceSN);
+            if (snapshot) {
+                return {
+                    "data": {
+                        "type": "Buffer",
+                        "data": Array.from(snapshot)
+                    },
+                    "type": {
+                        "ext": "jpg",
+                        "mime": "image/jpeg"
+                    },
+                    "isSnapshot": true,
+                    "isRecent": "snapshot"
+                };
+            }
+        }
+
         if (properties && properties.data) {
             properties.isSnapshot = false;
             let isPictureRecent = true;
@@ -1229,11 +980,11 @@ function checkDevicePictureProperty(deviceSN, properties) {
 
 /**
  * Is Connected
- * Checks if Eufy client is currently connected
+ * Checks if Eufy client is logged in
  * @returns {boolean} True if connected, false otherwise
  */
 function isConnected() {
-    return eufyClient ? eufyClient.isConnected() : false;
+    return !!eufyClient && loggedIn && eufyClient.loggedIn;
 }
 
 /**
@@ -1244,7 +995,15 @@ function isConnected() {
 async function close() {
     if (eufyClient) {
         utils.log('Closing connection to Eufy...', 'info');
-        return await eufyClient.close();
+        stopActiveStream();
+        currentStreamingSN = null;
+        loggedIn = false;
+        loginState = { status: 'idle' };
+        stations.clear();
+        devices.clear();
+        const client = eufyClient;
+        eufyClient = null;
+        return await client.disconnect();
     } else {
         utils.log('Eufy client is not initialized.', 'warn');
         return Promise.resolve();
@@ -1258,7 +1017,11 @@ async function close() {
 module.exports = {
     connect,
     isConnected,
+    getLoginState,
+    setCaptcha,
+    setVerifyCode,
     startStreamForDevice,
     stopStreamForDevice,
+    getEventThumbnail: (recordId) => events.getThumbnail(recordId),
     close
 };

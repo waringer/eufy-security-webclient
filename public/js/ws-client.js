@@ -4,9 +4,9 @@
  * Manages bidirectional WebSocket communication with Eufy Security WebSocket server.
  * Handles device discovery, property queries, command execution, and real-time events.
  * 
- * Protocol Documentation:
- * - https://bropat.github.io/eufy-security-ws/#/
- * - https://github.com/bropat/eufy-security-ws/
+ * The message format (start_listening, device.*, station.*, event messages) follows eufy-security-ws
+ * (https://github.com/bropat/eufy-security-ws/). This project's own server (server/eufy-client.js) implements
+ * the subset it needs and adds device.get_events and the driver.* login commands.
  * 
  * Dependencies: ui.js, main.js
  */
@@ -231,6 +231,9 @@ function eufyParseResultMessage(message) {
                 uiUpdateStatus('Listening started', 'darkseagreen');
                 uiDebugLog('Listening started successfully.');
 
+                // Show captcha / 2FA dialog if login is still pending on the server
+                loginShowDialog(message.result.state.login);
+
                 // Extract station SN (assumes single station setup)
                 const stations = message.result.state.stations;
                 stationSn = Array.isArray(stations) && stations.length > 0 ? stations[0] : '';
@@ -241,7 +244,7 @@ function eufyParseResultMessage(message) {
                     eufyStationGetProperties(stationSn);
 
                 // Populate device dropdown with discovered devices
-                uiMakeDeviceList(message.result.state.devices || []);
+                uiMakeDeviceList(message.result.state.devices || [], message.result.state.deviceNames || {});
             } else {
                 // Connection failed
                 uiUpdateStatus('Listening error', 'red');
@@ -250,25 +253,44 @@ function eufyParseResultMessage(message) {
                 uiMakeDeviceList([]);
             }
             break;
+        case 'driver.set_captcha':      // Captcha / 2FA answers
+        case 'driver.set_verify_code':
+            if (message.success) {
+                loginShowDialog(message.result && message.result.login);
+            } else {
+                document.getElementById('login-error').textContent = message.errorCode || 'Unknown error';
+            }
+            break;
+
         case 'device.get_properties':  // Device property response
             if (message.result && message.result.properties &&
                 message.result.serialNumber === uiGetDeviceSn()) {
                 const props = message.result.properties;
 
                 // Update UI with device properties
-                uiUpdateDeviceInfoTable(props);
+                uiUpdateDeviceInfoTable(props, message.result.meta);
                 uiShowPicture(props.picture);
 
-                // Hide binary data from debug log to prevent flooding
-                if (props.picture && props.picture.data)
-                    message.result.properties.picture.data.data = '[Binary Data Hidden]';
+            }
 
-                if (props.picture && props.picture.eventData)
-                    message.result.properties.picture.eventData.data = '[Binary Data Hidden]';
+            // Hide binary data from debug log to prevent flooding.
+            // Log a copy: the picture is processed asynchronously and must keep its data.
+            const logResult = { ...message.result, properties: { ...message.result.properties } };
+            const logPicture = logResult.properties.picture;
+            if (logPicture) {
+                logResult.properties.picture = { ...logPicture };
+                if (logPicture.data)
+                    logResult.properties.picture.data = { ...logPicture.data, data: '[Binary Data Hidden]' };
+                if (logPicture.eventData)
+                    logResult.properties.picture.eventData = { ...logPicture.eventData, data: '[Binary Data Hidden]' };
             }
 
             uiDebugLog(`Properties for device ${message.result.serialNumber}:`);
-            uiDebugLog(JSON.stringify(message.result, null, 2));
+            uiDebugLog(JSON.stringify(logResult, null, 2));
+            break;
+
+        case 'device.get_events':  // Events of one day from the station's history
+            uiEventsShow(message);
             break;
 
         case 'device.get_commands':  // Available device commands  // Available device commands
@@ -276,7 +298,7 @@ function eufyParseResultMessage(message) {
                 if (Array.isArray(message.result.commands)) {
                     // Show/hide UI controls based on device capabilities
                     uiShowVideoButton(message.result.commands.includes('deviceStartLivestream'));
-                    uiUpdateDeviceToolBar(message.result.commands.includes('devicePresetPosition'));
+                    uiUpdateDeviceToolBar(message.result.commands.includes('devicePresetPosition'), message.result.presets);
                     uiShowPanTiltControls(message.result.commands.includes('devicePanAndTilt'));
                 }
             }
@@ -373,6 +395,10 @@ function eufyParseEventMessage(message) {
                         case 'wifiSignalLevel':  // WiFi signal level (0-4)
                             uiUpdateDeviceWifiSignalLevel(message.event.serialNumber, message.event.value);
                             break;
+                        default:  // Any other property: refresh the info table of the selected device
+                            if (message.event.serialNumber === uiGetDeviceSn())
+                                uiUpdateDeviceProperties({ [message.event.name]: message.event.value }, false);
+                            break;
                     }
                     break;
             }
@@ -395,6 +421,32 @@ function eufyParseEventMessage(message) {
 
         case 'command result':  // Generic command execution result
             // Additional processing can be added here
+            break;
+
+        case 'captcha request':     // Eufy login needs a captcha answer
+            loginShowDialog({ status: 'captcha', image: message.event.image });
+            break;
+
+        case 'verify code request': // Eufy login needs a 2FA code
+            loginShowDialog({ status: '2fa', method: message.event.method });
+            break;
+
+        case 'login ok':            // Login finished - reload devices
+            loginShowDialog({ status: 'ok' });
+            eufyStartListening();
+            break;
+
+        case 'login error':
+            uiUpdateStatus('Eufy login error: ' + (message.event.message || ''), 'red');
+            break;
+
+        case 'stream_stopped_by_station':  // Livestream stopped by station
+            // Handle livestream stopped by station (e.g., resolution change)
+            if (message.event.serialNumber === uiGetDeviceSn()) {
+                debugConsoleLog(`Livestream for device ${message.event.serialNumber} stopped by station.`);
+                uiDebugLog(`Livestream for device ${message.event.serialNumber} stopped by station.`);
+                videoShowError('Livestream stopped by station. Please restart the livestream.');
+            }
             break;
 
         default:
@@ -493,6 +545,23 @@ function eufyStationDownloadImage(stationSn, imagePath) {
 }
 
 /**
+ * Get Device Events
+ * Requests the events of one day from the station's history
+ * @param {string} deviceSn - Device serial number
+ * @param {string} date - Day as YYYYMMDD
+ */
+function eufyDeviceGetEvents(deviceSn, date) {
+    wsSend(JSON.stringify({
+        messageId: 'device.get_events',
+        command: 'device.get_events',
+        serialNumber: deviceSn,
+        date: date
+    }));
+
+    uiDebugLog(`Requested events of device ${deviceSn} for ${date}.`);
+}
+
+/**
  * Get Device Properties
  * Requests all properties for a device (name, model, battery, WiFi, capabilities, etc.)
  * @param {string} deviceSn - Device serial number
@@ -554,3 +623,74 @@ function eufyPanAndTilt(deviceSn, panDirection) {
     }));
     uiDebugLog(`Sent pan and tilt command to device ${deviceSn}: panDirection ${panDirection}.`);
 }
+
+// function eufyUpdateProperty(deviceSn, name, value) {
+//     wsSend(JSON.stringify({
+//         messageId: 'device.updateProperty',
+//         command: 'device.updateProperty',
+//         serialNumber: deviceSn,
+//         name: name,
+//         value: value
+//     }));
+//     uiDebugLog(`Sent update property command to device ${deviceSn}: ${name} = ${value}.`);
+// }
+
+// ============================================================================
+// Eufy Login Dialog (captcha / 2FA)
+// ============================================================================
+
+let loginDialogStatus = null;   // 'captcha' | '2fa' | null
+
+/**
+ * Show or hide the login dialog depending on the server's login state
+ * @param {Object} login - Login state { status, image?, method? }
+ */
+function loginShowDialog(login) {
+    const modal = document.getElementById('login-modal');
+    const status = login && login.status;
+
+    if (status !== 'captcha' && status !== '2fa') {
+        loginDialogStatus = null;
+        modal.classList.remove('show');
+        return;
+    }
+
+    const image = document.getElementById('login-captcha');
+    const input = document.getElementById('login-input');
+    document.getElementById('login-error').textContent = '';
+    input.value = '';
+
+    if (status === 'captcha') {
+        document.getElementById('login-text').textContent = 'Eufy requires a captcha. Enter the characters shown:';
+        image.src = login.image;
+        image.style.display = '';
+    } else {
+        document.getElementById('login-text').textContent = `Eufy sent a verification code${login.method ? ' (' + login.method + ')' : ''}. Enter it:`;
+        image.style.display = 'none';
+    }
+
+    loginDialogStatus = status;
+    modal.classList.add('show');
+    input.focus();
+}
+
+/**
+ * Send the entered captcha / verification code to the server
+ */
+function loginSubmit() {
+    const value = document.getElementById('login-input').value.trim();
+    if (!value || !loginDialogStatus) return;
+
+    if (loginDialogStatus === 'captcha') {
+        wsSend(JSON.stringify({ messageId: 'driver.set_captcha', command: 'driver.set_captcha', captcha: value }));
+    } else {
+        wsSend(JSON.stringify({ messageId: 'driver.set_verify_code', command: 'driver.set_verify_code', verifyCode: value }));
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('login-submit-btn').addEventListener('click', loginSubmit);
+    document.getElementById('login-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') loginSubmit();
+    });
+});

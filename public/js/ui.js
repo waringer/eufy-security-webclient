@@ -20,6 +20,7 @@
 let presetButtons = null;   // Number of preset position buttons to display
 let inConfig = false;       // True when config modal is open (disables keyboard shortcuts)
 let lastDeviceInfo = null   // Last displayed device properties serial number
+const localStorageKeyLastDevice = 'eufyWebClientLastDevice';   // Device selected last time
 
 // ============================================================================
 // Debug and Initialization
@@ -77,10 +78,20 @@ function uiInit() {
         select.addEventListener('change', function () {
             const deviceSn = select.value;
             if (deviceSn) {
+                // Remember the device for the next start
+                try { localStorage.setItem(localStorageKeyLastDevice, deviceSn); } catch (e) { /* storage not available */ }
+
                 // Hide buttons until properties are loaded
                 document.getElementById('device-update-btn').style.display = "none";
                 document.getElementById('device-video-btn').style.display = "none";
                 uiChangePositionPresetError(null);
+
+                // Drop the previous device's picture (it must not be reused as event picture)
+                uiCleanupDevicePicture();
+                document.getElementById('device-picture').replaceChildren();
+
+                // Event list belongs to the device
+                if (typeof uiEventsOnDeviceChange === 'function') uiEventsOnDeviceChange(deviceSn);
 
                 // Fetch device properties and available commands
                 eufyDeviceGetProperties(deviceSn);
@@ -291,11 +302,11 @@ function uiSendNotification(title, body) {
 /**
  * Update Eufy WebSocket Version
  * Displays client and server version info in status bar
- * @param {string} clientVersion - eufy-security-client library version
- * @param {string} serverVersion - eufy-security-ws server version
+ * @param {string} clientVersion - @mega-yfue/eufy-sdk version
+ * @param {string} serverVersion - webclient server version
  */
 function uiUpdateEufyWSVersion(clientVersion, serverVersion) {
-    document.getElementById('ws-version').textContent = `Eufy-Client: ${clientVersion}, Server: ${serverVersion}`;
+    document.getElementById('ws-version').textContent = `Eufy-SDK: ${clientVersion}, Server: ${serverVersion}`;
 };
 
 /**
@@ -310,7 +321,7 @@ function uiUpdateStationSn(stationSn) {
 /**
  * Update Station Info
  * Displays detailed station information in status bar
- * Shows: Name, Model, HW/SW versions, MAC, IP, HDD free space
+ * Shows: Name, Model, IP (the SDK reports no HW/SW version or MAC for stations)
  * @param {Object} props - Station properties object
  */
 function uiUpdateStationInfo(props) {
@@ -321,13 +332,16 @@ function uiUpdateStationInfo(props) {
         hddFreePercent = Math.round((free / props.storageInfoHdd.disk_size) * 100);
     }
 
-    // Build status line with station details
-    const statusLine2 =
-        `Name: ${props.name || ''} | Model: ${props.model || ''} | HW: ${props.hardwareVersion || ''} | SW: ${props.softwareVersion || ''} | ` +
-        `MAC: ${props.macAddress || ''} | IP: ${props.lanIpAddress || ''}` +
-        (hddFreePercent !== '' ? ` | HDD free: ${hddFreePercent}%` : '');
+    // Build status line with station details (fields the server does not know are omitted)
+    const parts = [
+        ['Name', props['$name']],
+        ['Model', props['$model']],
+        ['IP', props.ipAddress],
+        ['HDD free', hddFreePercent !== '' ? hddFreePercent + '%' : ''],
+    ].filter(([, value]) => value !== undefined && value !== null && value !== '')
+     .map(([label, value]) => `${label}: ${value}`);
 
-    document.getElementById('station-version').textContent = statusLine2;
+    document.getElementById('station-version').textContent = parts.length ? ' | ' + parts.join(' | ') : '';
 }
 
 /**
@@ -386,18 +400,18 @@ function uiUpdateStatus(text, color = 'black') {
 /**
  * Update Device Info Table
  * Replaces device info table with new properties
- * @param {Object} props - Device properties object
+ * @param {Object} props - Device properties (SDK names, plus '$' device information)
+ * @param {Object} meta - Description of the properties (groups, labels, units)
  */
-function uiUpdateDeviceInfoTable(props) {
-    if (document.getElementById('device-info').children.length === 0)
-        uiCreatePropertyTable('device-info');
-
-    const current = props.serialNumber;
-    if (lastDeviceInfo && current && lastDeviceInfo === current) {
-        uiUpdateDeviceProperties(props, false);
-    } else {
+function uiUpdateDeviceInfoTable(props, meta) {
+    const current = props['$serialNumber'];
+    if (document.getElementById('device-info').children.length === 0 || !current || lastDeviceInfo !== current) {
+        // New device (or first load): the table layout comes from the server's description of this device
         lastDeviceInfo = current;
+        uiCreatePropertyTable('device-info', meta);
         uiUpdateDeviceProperties(props, true);
+    } else {
+        uiUpdateDeviceProperties(props, false);
     }
 }
 
@@ -410,24 +424,27 @@ function uiUpdateDeviceInfoTable(props) {
  * Populates device dropdown and auto-selects first device
  * @param {string[]} devices - Array of device serial numbers
  */
-function uiMakeDeviceList(devices) {
+function uiMakeDeviceList(devices, names = {}) {
     const selectContainer = document.getElementById('device-select-container');
     const select = document.getElementById('device-select');
 
-    // Clear and rebuild dropdown options
+    // Clear and rebuild dropdown options (server sends them in a stable order)
     select.replaceChildren();
     devices.forEach(dev => {
         const opt = document.createElement('option');
         opt.value = dev;
-        opt.textContent = dev;
+        opt.textContent = names[dev] || dev;
+        opt.title = dev;
         select.appendChild(opt);
     });
 
     if (devices.length > 0) {
         selectContainer.style.display = null;
 
-        // Auto-select and load first device
-        select.selectedIndex = 0;
+        // Select the device used last time, the first one otherwise, and load it
+        let lastDevice = null;
+        try { lastDevice = localStorage.getItem(localStorageKeyLastDevice); } catch (e) { /* storage not available */ }
+        select.selectedIndex = Math.max(0, devices.indexOf(lastDevice));
         select.dispatchEvent(new Event('change'));
     } else {
         selectContainer.style.display = 'none';
@@ -510,8 +527,9 @@ async function uiExtractEventPictureFromBlob() {
     // Try to get event image from existing flip card back side OR standalone image
     let existingEventImg = picDiv.querySelector('.flip-card-back img');
     if (!existingEventImg) {
-        // No flip card found, try to get standalone event image
-        existingEventImg = picDiv.querySelector('.device-picture-img');
+        // No flip card found, try to get standalone event image.
+        // A standalone snapshot is not an event image and must not be reused as one.
+        existingEventImg = picDiv.querySelector('.device-picture-img[alt="Event Image"]');
     }
 
     if (existingEventImg && existingEventImg.src.startsWith('blob:')) {
@@ -741,6 +759,9 @@ function uiShowSnapshot(picture, eventData, pictureType, eventType, isPictureRec
 function uiUpdateDeviceVideo() {
     const picDiv = document.getElementById('device-picture');
 
+    // The video is shown in the live view
+    uiSetView('live');
+
     // Revoke old blob URLs to prevent memory leak
     uiCleanupDevicePicture();
 
@@ -784,25 +805,42 @@ function uiShowVideoButton(show) {
 /**
  * Show Position Preset Controls
  * Creates and displays preset position buttons for PTZ camera
- * Button count is determined by global presetButtons variable
+ * The buttons are the presets stored on the camera ([{ id, isDefault }]); if the camera did not report them
+ * the global presetButtons count is used
  * @param {boolean} showPresets - True to show controls, false to hide
  */
-function uiUpdateDeviceToolBar(showPresets) {
+function uiUpdateDeviceToolBar(showPresets, presets) {
     const toolbarContainer = document.getElementById('device-toolbar');
 
+    // Switch between live view / picture and event list comes first
+    toolbarContainer.replaceChildren(uiCreateViewSwitch());
+
     if (showPresets) {
+        // Presets only make sense for the live view, they are hidden in the event list
+        const presetBox = document.createElement('div');
+        presetBox.id = 'toolbar-presets';
+        toolbarContainer.appendChild(presetBox);
+
         // Add label
         const presetsLabel = document.createElement('span');
         presetsLabel.className = 'preset-label';
         presetsLabel.textContent = 'Preset Position:';
-        toolbarContainer.replaceChildren(presetsLabel);
+        presetBox.appendChild(presetsLabel);
 
-        // Create preset buttons (typically 4-8 positions)
-        for (let i = 0; i < presetButtons; i++) {
+        // One button per stored preset; without the camera's list the default count is shown
+        const known = Array.isArray(presets);
+        const entries = known
+            ? presets
+            : Array.from({ length: presetButtons || 0 }, (_, i) => ({ id: i, isDefault: false }));
+
+        if (known && entries.length === 0) presetsLabel.textContent = 'No presets stored';
+
+        for (const entry of entries) {
             const btn = document.createElement('button');
-            btn.value = i;
-            btn.textContent = i + 1;  // Display 1-based numbering
+            btn.value = entry.id;
+            btn.textContent = entry.id + 1;  // Display 1-based numbering
             btn.className = 'preset-btn';
+            if (entry.isDefault) btn.title = 'Default position';
 
             // Execute preset position on click
             btn.addEventListener('click', function () {
@@ -812,10 +850,8 @@ function uiUpdateDeviceToolBar(showPresets) {
                 }
             });
 
-            toolbarContainer.appendChild(btn);
+            presetBox.appendChild(btn);
         }
-    } else {
-        toolbarContainer.replaceChildren();
     }
 
     const toolbarText = document.createElement('span');
@@ -885,7 +921,7 @@ function uiGetDeviceSn() {
  * Displays configuration modal with current settings
  * 
  * Configurable settings:
- * - Eufy account (username, password, country, language)
+ * - Eufy account (username, password, country)
  * - Video scaling resolution
  * - FFmpeg transcoding preset (ultrafast, veryfast, fast, medium)
  * - FFmpeg CRF quality (0-51, lower = better quality)
@@ -905,7 +941,6 @@ function uiOpenConfigModal(config) {
     document.getElementById('config-eufy-username').value = config.EUFY_CONFIG?.username || '';
     document.getElementById('config-eufy-password').value = config.EUFY_CONFIG?.password || '';
     document.getElementById('config-eufy-country').value = config.EUFY_CONFIG?.country || 'DE';
-    document.getElementById('config-eufy-language').value = config.EUFY_CONFIG?.language || 'en';
     document.getElementById('config-video-scale').value = config.VIDEO_SCALE || '';
     document.getElementById('config-transcoding-preset').value = config.TRANSCODING_PRESET || 'ultrafast';
     document.getElementById('config-transcoding-crf').value = config.TRANSCODING_CRF || '';
@@ -964,8 +999,7 @@ function uiOpenConfigModal(config) {
             EUFY_CONFIG: {
                 username: document.getElementById('config-eufy-username').value,
                 password: document.getElementById('config-eufy-password').value,
-                country: document.getElementById('config-eufy-country').value,
-                language: document.getElementById('config-eufy-language').value
+                country: document.getElementById('config-eufy-country').value
             },
             VIDEO_SCALE: document.getElementById('config-video-scale').value,
             TRANSCODING_PRESET: document.getElementById('config-transcoding-preset').value,

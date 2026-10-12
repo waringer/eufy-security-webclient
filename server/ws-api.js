@@ -11,11 +11,9 @@
  */
 
 const utils = require('./utils');
-// Use local eufy-security-client in dev mode, installed package in production
-const eufyClientPath = utils.isDev ? '../../eufy-security-client' : 'eufy-security-client';
 
 const { WebSocketServer } = require('ws');
-const eufyVersion = require(`${eufyClientPath}/package.json`).version;
+const eufyVersion = require('./eufy-sdk').getSdkVersion();
 const serverVersion = require('../package.json').version;
 
 let wss = null;                          // WebSocket Server instance

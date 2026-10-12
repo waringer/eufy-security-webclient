@@ -254,30 +254,40 @@ h1 img {
 }
 
 .device-info-content.open {
-    max-height: 1000px;
+    max-height: 20000px;   /* only an upper bound for the animation, the "Other" group has 80+ entries */
 }
 
 .device-info-grid {
     padding: 1rem;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);   /* never grow wider than the panel */
     gap: 0.75rem;
 }
 
 .device-info-item {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: baseline;
+    gap: 0.75rem;
     padding: 0.1rem 0;
 }
 
 .device-info-label {
     font-size: 0.85rem;
     color: var(--text-tertiary);
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 60%;
+    overflow-wrap: anywhere;   /* long camelCase names wrap instead of widening the panel */
 }
 
 .device-info-value {
     font-size: 0.9rem;
     font-weight: 500;
+    flex: 1 1 0;
+    min-width: 0;
+    text-align: right;
+    overflow-wrap: anywhere;   /* long values (e.g. JSON) wrap */
 }
 
 /***************************************************/
@@ -685,4 +695,158 @@ span.false {
 ::-webkit-scrollbar-thumb {
     background: var(--border-light);
     border-radius: 4px;
+}
+
+/* ========== Event list ========== */
+/* The main area shows either the live view / picture or the event list (switch in the toolbar) */
+.main-content[data-view="events"] #device-picture,
+.main-content[data-view="live"] #events-panel,
+.main-content[data-view="events"] #toolbar-presets {
+    display: none;
+}
+
+#toolbar-presets {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+#view-switch {
+    display: flex;
+}
+
+#view-switch button {
+    border-radius: 0;
+}
+
+#view-switch button:first-child {
+    border-radius: 6px 0 0 6px;
+}
+
+#view-switch button:last-child {
+    border-radius: 0 6px 6px 0;
+}
+
+#view-switch button.active {
+    background-color: var(--accent-color);
+    color: #fff;
+}
+
+#events-panel {
+    padding: 1rem 1.5rem;
+}
+
+#events-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+#events-nav button {
+    min-width: 2rem;
+}
+
+#events-date {
+    min-width: 11rem;
+    text-align: center;
+    color: var(--text-primary);
+}
+
+#events-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 0.75rem;
+}
+
+.events-message {
+    grid-column: 1 / -1;
+    color: var(--text-tertiary);
+    padding: 0.5rem 0;
+}
+
+.event-item {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-dark);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.event-thumb {
+    display: block;
+    aspect-ratio: 4 / 3;
+    background: var(--bg-tertiary);
+}
+
+.event-thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;   /* thumbnails of dual lens cameras are not 16:9 */
+}
+
+.event-thumb.no-thumb::after {
+    content: "no image";
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-tertiary);
+    font-size: 0.8rem;
+}
+
+.event-meta {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+}
+
+.event-time {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.event-duration {
+    color: var(--text-tertiary);
+}
+
+/* ========== Event popup ========== */
+#event-popup .modal-content {
+    max-width: min(92vw, 900px);
+}
+
+#event-popup .modal-header h2 {
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+#event-popup-view {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+}
+
+#event-popup-image {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    max-height: 75vh;
+    object-fit: contain;
+}
+
+#event-popup-view button {
+    flex: 0 0 auto;
+    font-size: 1.5rem;
+    padding: 0.5rem 0.8rem;
+}
+
+#event-popup-view button:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+#events-nav #events-date {
+    min-width: 11rem;
 }

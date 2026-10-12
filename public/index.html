@@ -13,6 +13,7 @@
     <script src="js/ui.js"></script>
     <script src="js/ui-deviceproperties.js"></script>
     <script src="js/ws-client.js"></script>
+    <script src="js/ui-events.js"></script>
     <script src="js/video.js"></script>
 </head>
 
@@ -42,6 +43,18 @@
             <div id="device-toolbar"></div>
             <div id="device-content">
                 <div id="device-picture"></div>
+                <div id="events-panel">
+                    <div id="events-nav">
+                        <button id="events-prev7" title="7 days back">&#8249;&#8249; 7</button>
+                        <button id="events-prev" title="Previous day">&#8249;</button>
+                        <span id="events-date"></span>
+                        <button id="events-next" title="Next day">&#8250;</button>
+                        <button id="events-next7" title="7 days forward">7 &#8250;&#8250;</button>
+                        <button id="events-today" title="Today">Today</button>
+                        <button id="events-reload" title="Reload">&#10227;</button>
+                    </div>
+                    <div id="events-list"></div>
+                </div>
                 <details class="info-details">
                     <summary>Received information</summary>
                     <pre id="info"></pre>
@@ -83,10 +96,6 @@
                     <label for="config-eufy-country">Country:</label>
                     <input type="text" id="config-eufy-country" placeholder="DE" maxlength="2">
                 </div>
-                <div class="config-field">
-                    <label for="config-eufy-language">Language:</label>
-                    <input type="text" id="config-eufy-language" placeholder="en" maxlength="2">
-                </div>
 
                 <h3>Transcoding Settings</h3>
                 <div class="config-field">
@@ -125,6 +134,41 @@
             <div class="modal-footer">
                 <button id="config-save-btn">Save</button>
                 <button id="config-cancel-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="event-popup" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="event-popup-title"></h2>
+                <span class="modal-close" id="event-popup-close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="event-popup-view">
+                    <button id="event-popup-prev" title="Previous event (arrow left)">&#8249;</button>
+                    <img id="event-popup-image" alt="">
+                    <button id="event-popup-next" title="Next event (arrow right)">&#8250;</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="login-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="login-title">Eufy Login</h2>
+            </div>
+            <div class="modal-body">
+                <p id="login-text"></p>
+                <img id="login-captcha" alt="Captcha" style="display: none; max-width: 100%; margin-bottom: 1em;">
+                <div class="config-field">
+                    <input type="text" id="login-input" autocomplete="off">
+                </div>
+                <p id="login-error" style="color: red;"></p>
+            </div>
+            <div class="modal-footer">
+                <button id="login-submit-btn">Submit</button>
             </div>
         </div>
     </div>
