@@ -78,6 +78,32 @@ function initRestServer() {
         }
     });
 
+    /**
+     * Event Detection Picture Endpoint
+     * Route: GET /event-crop/:pictureId
+     *
+     * JPEG of what the station's AI detected in an event (fetched over P2P, cached on disk).
+     * Only picture ids of event lists this server delivered are known.
+     */
+    app.get('/event-crop/:pictureId', async (req, res) => {
+        const pictureId = req.params.pictureId;
+        if (!/^\d{1,20}$/.test(pictureId)) {
+            return res.status(400).send('Invalid picture id');
+        }
+
+        try {
+            const jpeg = await eufy.getEventCropPicture(pictureId);
+            if (!jpeg) return res.status(404).send('Unknown picture');
+
+            res.set('Content-Type', 'image/jpeg');
+            res.set('Cache-Control', 'public, max-age=86400, immutable');   // a picture id never changes its image
+            res.send(jpeg);
+        } catch (error) {
+            utils.log(`❌ Event detection picture ${pictureId}: ${error.message}`, 'warn');
+            res.status(502).send('Picture not available');
+        }
+    });
+
     app.get('/:serialNumber.mp4', (req, res) => {
         const requestedDevice = req.params.serialNumber;
 

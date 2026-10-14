@@ -388,6 +388,7 @@ function eufyParseEventMessage(message) {
                         case 'picture':  // Device thumbnail updated
                             if (message.event.serialNumber === uiGetDeviceSn())
                                 uiUpdateDevicePicture(message.event.value);
+                            uiEventsOnLiveEvent(message.event.serialNumber);   // a new event picture means a new event
                             break;
                         case 'wifiRssi':  // WiFi signal strength (dBm)
                             uiUpdateDeviceWifiRssi(message.event.serialNumber, message.event.value);
@@ -414,9 +415,14 @@ function eufyParseEventMessage(message) {
         case 'sound detected':      // Audio detection
         case 'pet detected':        // Pet AI detection
         case 'verhicle detected':   // Vehicle AI detection (typo in original API)
+        case 'vehicle detected':            // Names the server sends since the SDK change
+        case 'stranger person detected':
+        case 'crying detected':
             // Show browser notification on detection event
-            if (message.event.state === true)
+            if (message.event.state === true) {
                 uiSendNotification(`Eufy Event: ${message.event.event}`, `Device SN: ${message.event.serialNumber}`);
+                uiEventsOnLiveEvent(message.event.serialNumber);
+            }
             break;
 
         case 'command result':  // Generic command execution result

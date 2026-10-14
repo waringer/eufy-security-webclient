@@ -3,9 +3,12 @@
  *
  * Reads the event history of a HomeBase (table history_record_info) and the event thumbnails
  * over the SDK's P2P session. The SDK has no API for this, so it uses the session directly:
- *   - CMD_DATABASE_QUERY_BY_DATE (10006): events of ONE day (start_date; end_date must be a later day)
- *   - CMD_DATABASE_IMAGE via session.requestImage(): thumbnail JPEG of an event
- * Both commands are the ones the Eufy app uses; their payloads follow bropat/eufy-security-client (src/http/station.ts).
+ *   - CMD_DATABASE_QUERY_COMBINATION_WITH_AI (10011): events of ONE day together with the detections of the
+ *     station's AI (person / vehicle / pet, recognised persons); payload as the SDK sends for its table reads
+ *   - CMD_DATABASE_QUERY_BY_DATE (10006): events of ONE day without detections, if the station refuses 10011
+ *   - CMD_DATABASE_IMAGE via session.requestImage(): thumbnail JPEG of an event, detection pictures
+ * The commands are the ones the Eufy app uses; the payloads of 10006 and the image request follow
+ * bropat/eufy-security-client (src/http/station.ts).
  *
  * Station time stamps are local station time ("2026-10-11 19:06:29"), shown as they are.
  */
@@ -15,18 +18,26 @@ const path = require('path');
 const utils = require('./utils');
 
 const CMD_DATABASE_QUERY_BY_DATE = 10006;
+const CMD_DATABASE_QUERY_COMBINATION_WITH_AI = 10011;
+const STATION_CHANNEL = 255;
 const EVENT_TABLE = 'history_record_info';
 const MAX_EVENTS_PER_DAY = 300;
 const QUERY_TIMEOUT_MS = 20000;
 const IMAGE_TIMEOUT_MS = 20000;
 const MAX_LOOKBACK_DAYS = 7;
 
+// detection_type bits of a crop picture row. Person (face / body), vehicle, pet and sound were compared with the app,
+// crying and package are taken from bropat/eufy-security-client (FilterDetectType) and are not verified.
+const DETECTION_BITS = [[1, 'person'], [2, 'person'], [4, 'vehicle'], [8, 'pet'], [128, 'sound'], [256, 'crying'], [512, 'package'], [1024, 'package']];
+
 const THUMB_DIR = path.join(utils.dataDir, 'event-thumbs');
+const CROP_DIR = path.join(utils.dataDir, 'event-crops');
 const PICTURE_DIR = path.join(utils.dataDir, 'event-pictures');
 
 let ctx = null;                       // { getClient(), getInfo(sn), listDeviceSerials() }
 const queues = new Map();             // station serial -> promise chain (one P2P request at a time)
 const eventIndex = new Map();         // recordId -> { stationSn, deviceSn, thumbPath }
+const cropIndex = new Map();          // pictureId -> { stationSn, deviceSn, cropPath }
 const lastRecordByDevice = new Map(); // device serial -> record id of the last picture taken from the station
 
 /**
@@ -85,7 +96,7 @@ async function getStationSession(deviceSn) {
 }
 
 /**
- * First complete JSON document of a station reply that has a numeric "cmd"
+ * First complete JSON document of a station reply that has a numeric "cmd" (or is a refusal: "mIntRet" only)
  * (the reply arrives in several fragments, followed by binary padding)
  */
 function firstDocument(decoded) {
@@ -106,7 +117,7 @@ function firstDocument(decoded) {
         if (end < 0) return undefined;   // not complete yet
         try {
             const parsed = JSON.parse(decoded.slice(start, end + 1));
-            if (parsed && parsed.cmd !== undefined) return parsed;
+            if (parsed && (parsed.cmd !== undefined || parsed.mIntRet !== undefined)) return parsed;
         } catch (e) { /* try the next brace */ }
     }
     return undefined;
@@ -115,7 +126,7 @@ function firstDocument(decoded) {
 /**
  * Send a database query and wait for the reply of the same command
  */
-function queryDatabase(session, accountId, innerCmd, query) {
+function queryDatabase(session, accountId, innerCmd, query, channel = 0) {
     return new Promise((resolve, reject) => {
         let text = '';
         const finish = (fn, value) => {
@@ -127,16 +138,98 @@ function queryDatabase(session, accountId, innerCmd, query) {
             text += chunk.text;
             const doc = firstDocument(Buffer.from(text, 'latin1').toString('utf8'));
             if (doc && doc.cmd === innerCmd) finish(resolve, doc);
+            else if (doc && doc.cmd === undefined) finish(reject, new Error(`station refused the database query: ${doc.msg || doc.mIntRet}`));
         };
         const timer = setTimeout(() => finish(reject, new Error('station did not answer the database query')), QUERY_TIMEOUT_MS);
         session.on('dbChunk', onChunk);
         try {
-            // channel 0 like the old client (the SDK default 255 is for its own table reads)
-            session.queryDatabase(EVENT_TABLE, { accountId, channel: 0, innerCmd, query });
+            // channel 0 like the old client; the combined query of the app goes to the station channel
+            session.queryDatabase(EVENT_TABLE, { accountId, channel, innerCmd, query });
         } catch (error) {
             finish(reject, error);
         }
     });
+}
+
+/**
+ * Rows of one day: the events and, if the station supports it, what its AI found in them
+ * @returns {Promise<{rows: Array, crops: Array, persons: Array}>} history_record_info, record_crop_picture_info, person_basic_info
+ */
+async function queryDay(session, accountId, stationSn, deviceSn, day) {
+    const nextDay = shiftDate(day, 1);   // end_date must be later than start_date, the reply only holds start_date's day
+
+    // The query of the app's event list: the events together with their detections (one reply, a table each)
+    try {
+        const doc = await queryDatabase(session, accountId, CMD_DATABASE_QUERY_COMBINATION_WITH_AI, {
+            count: MAX_EVENTS_PER_DAY,
+            start_date: day,
+            end_date: nextDay,
+            start_id: 0,
+            end_id: 1,
+            flag: 0,
+            need_ai: 1,
+            res_unzip: 1,
+            update_time: '0',
+            start_time: `${day}000000`,
+            alarm_id: ''
+        }, STATION_CHANNEL);
+        const tables = Array.isArray(doc.data) ? doc.data : [];   // "[]" when the day has no events
+        const table = (name) => {
+            const found = tables.find(entry => entry.table_name === name);
+            return found && Array.isArray(found.payload) ? found.payload : [];
+        };
+        return { rows: table(EVENT_TABLE), crops: table('record_crop_picture_info'), persons: table('person_basic_info') };
+    } catch (error) {
+        utils.log(`Event detections of ${stationSn} not available (${error.message}), reading the plain event list`, 'debug');
+    }
+
+    // Plain event list (payload as in bropat/eufy-security-client), for all cameras of the station
+    const cameras = ctx.listDeviceSerials().filter(sn => {
+        const info = ctx.getInfo(sn);
+        return info && info.stationSn === stationSn && sn !== stationSn;
+    });
+    const doc = await queryDatabase(session, accountId, CMD_DATABASE_QUERY_BY_DATE, {
+        count: MAX_EVENTS_PER_DAY,
+        detection_type: 0,
+        device_info: (cameras.length > 0 ? cameras : [deviceSn]).map(sn => ({ device_sn: sn })),
+        end_date: nextDay,
+        event_type: 0,
+        flag: 0,
+        res_unzip: 1,
+        start_date: day,
+        start_time: `${day}000000`,
+        storage_cloud: -1,
+        ai_type: 0
+    });
+    return { rows: Array.isArray(doc.data) ? doc.data : [], crops: [], persons: [] };   // "" when the day has no events
+}
+
+/**
+ * What the station's AI found in an event
+ * @param {Array} crops - record_crop_picture_info rows of the event
+ * @param {Array} persons - person_basic_info rows of the station
+ * @returns {{detections: string[], persons: string[], crops: Array}} Kinds of detections, names of recognised
+ *          persons and the detection pictures ({ pictureId, detections, person })
+ */
+function describeDetections(crops, persons) {
+    const order = DETECTION_BITS.map(([, kind]) => kind);
+    const sorted = (kinds) => [...kinds].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+
+    const detections = new Set();
+    const names = new Set();
+    const pictures = [];
+    for (const crop of crops) {
+        const kinds = new Set(DETECTION_BITS.filter(([bit]) => crop.detection_type & bit).map(([, kind]) => kind));
+        kinds.forEach(kind => detections.add(kind));
+
+        // Strangers have a person too, named "stranger<n>" by the station
+        const person = persons.find(entry => entry.person_id === crop.person_id);
+        const name = person && person.name && !/^stranger\d*$/i.test(person.name) ? person.name : null;
+        if (name) names.add(name);
+
+        if (crop.crop_path) pictures.push({ pictureId: crop.picture_id, detections: sorted(kinds), person: name });
+    }
+    return { detections: sorted(detections), persons: [...names], crops: pictures };
 }
 
 /**
@@ -151,33 +244,15 @@ async function getEvents(deviceSn, date) {
 
     const { session, accountId, stationSn } = await getStationSession(deviceSn);
 
-    // All cameras of the station: the filter by device is done afterwards
-    const cameras = ctx.listDeviceSerials().filter(sn => {
-        const info = ctx.getInfo(sn);
-        return info && info.stationSn === stationSn && sn !== stationSn;
-    });
-
-    const doc = await enqueue(stationSn, () => queryDatabase(session, accountId, CMD_DATABASE_QUERY_BY_DATE, {
-        count: MAX_EVENTS_PER_DAY,
-        detection_type: 0,
-        device_info: (cameras.length > 0 ? cameras : [deviceSn]).map(sn => ({ device_sn: sn })),
-        end_date: shiftDate(day, 1),    // must be later than start_date, the reply only holds start_date's day
-        event_type: 0,
-        flag: 0,
-        res_unzip: 1,
-        start_date: day,
-        start_time: `${day}000000`,
-        storage_cloud: -1,
-        ai_type: 0
-    }));
-
-    const rows = Array.isArray(doc.data) ? doc.data : [];   // "" when the day has no events
+    const { rows, crops, persons } = await enqueue(stationSn, () => queryDay(session, accountId, stationSn, deviceSn, day));
     if (rows.length >= MAX_EVENTS_PER_DAY) utils.log(`⚠️ Event list of ${day} may be truncated (${rows.length} events)`, 'warn');
 
     const events = rows
-        .filter(row => row.device_sn === deviceSn)
+        .filter(row => row.device_sn === deviceSn && String(row.start_time).slice(0, 10).replace(/-/g, '') === day)
         .map(row => {
             eventIndex.set(String(row.record_id), { stationSn, deviceSn: row.device_sn, thumbPath: row.thumb_path });
+            const eventCrops = crops.filter(crop => crop.record_id === row.record_id);
+            eventCrops.forEach(crop => cropIndex.set(String(crop.picture_id), { stationSn, deviceSn: row.device_sn, cropPath: crop.crop_path }));
             return {
                 recordId: row.record_id,
                 deviceSn: row.device_sn,
@@ -185,6 +260,7 @@ async function getEvents(deviceSn, date) {
                 end: row.end_time,
                 durationSec: Math.max(0, Math.round((new Date(row.end_time) - new Date(row.start_time)) / 1000)),
                 triggerType: row.trigger_type,
+                ...describeDetections(eventCrops, persons),
                 size: row.folder_size,
                 hasThumbnail: !!row.thumb_path,
                 cipherId: row.cipher_id,
@@ -226,14 +302,35 @@ async function fetchImage(deviceSn, stationSn, filePath) {
  * @returns {Promise<Buffer|null>} JPEG or null if unknown
  */
 async function getThumbnail(recordId) {
-    const file = path.join(THUMB_DIR, `${recordId}.jpg`);
-    if (fs.existsSync(file)) return fs.readFileSync(file);
-
     const entry = eventIndex.get(String(recordId));
-    if (!entry || !entry.thumbPath) return null;
+    return getCachedImage(THUMB_DIR, recordId, entry && { ...entry, imagePath: entry.thumbPath });
+}
 
-    const data = await fetchImage(entry.deviceSn, entry.stationSn, entry.thumbPath);
-    fs.mkdirSync(THUMB_DIR, { recursive: true });
+/**
+ * Detection picture of an event (JPEG): the part of the image the station's AI recognised something in.
+ * Cached on disk and only served for picture ids of a list this server delivered, like the thumbnails.
+ * @param {string} pictureId - Picture id
+ * @returns {Promise<Buffer|null>} JPEG or null if unknown
+ */
+async function getCropPicture(pictureId) {
+    const entry = cropIndex.get(String(pictureId));
+    return getCachedImage(CROP_DIR, pictureId, entry && { ...entry, imagePath: entry.cropPath });
+}
+
+/**
+ * Station image from the disk cache, else from the station
+ * @param {string} dir - Cache directory
+ * @param {string} id - Id the image is cached under
+ * @param {Object} [entry] - { stationSn, deviceSn, imagePath } if the image is known
+ * @returns {Promise<Buffer|null>} JPEG or null if unknown
+ */
+async function getCachedImage(dir, id, entry) {
+    const file = path.join(dir, `${id}.jpg`);
+    if (fs.existsSync(file)) return fs.readFileSync(file);
+    if (!entry || !entry.imagePath) return null;
+
+    const data = await fetchImage(entry.deviceSn, entry.stationSn, entry.imagePath);
+    fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(file, data);
     return data;
 }
@@ -277,4 +374,4 @@ async function refreshLatestEventPicture(deviceSn) {
     return { data, type: { ext: 'jpg', mime: 'image/jpeg' }, event };
 }
 
-module.exports = { init, getEvents, getThumbnail, refreshLatestEventPicture };
+module.exports = { init, getEvents, getThumbnail, getCropPicture, refreshLatestEventPicture };

@@ -1023,5 +1023,6 @@ module.exports = {
     startStreamForDevice,
     stopStreamForDevice,
     getEventThumbnail: (recordId) => events.getThumbnail(recordId),
+    getEventCropPicture: (pictureId) => events.getCropPicture(pictureId),
     close
 };

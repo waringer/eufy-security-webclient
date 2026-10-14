@@ -9,6 +9,10 @@ let eventsDay = null;           // Displayed day (local date, midnight); kept wh
 let eventsRequest = null;       // { deviceSn, date } of the request we wait for
 let eventsShown = [];           // Events of the displayed list (for the popup)
 let popupIndex = -1;            // Index in eventsShown of the event in the popup, -1 = closed
+let eventsRefreshTimers = [];   // Pending background reloads after a live event
+let eventsRefreshPending = false;   // A background reload waits for the popup to close
+
+const EVENTS_REFRESH_DELAYS_MS = [10000, 45000, 150000];
 
 /**
  * "YYYYMMDD" of a date (local)
@@ -30,6 +34,45 @@ function uiEventsToday() {
  */
 function uiEventsFormatDuration(seconds) {
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+/**
+ * What the station's AI found in an event, e.g. "Person, Pet" or "Person (Alex)"; '' if nothing is known
+ */
+function uiEventsDetectionLabel(event) {
+    return uiEventsFormatDetections(event.detections, event.persons);
+}
+
+/**
+ * Kinds of detections and names of recognised persons as text
+ */
+function uiEventsFormatDetections(detections, persons) {
+    const labels = { person: 'Person', vehicle: 'Vehicle', pet: 'Pet', sound: 'Sound', crying: 'Crying', package: 'Package' };
+    const kinds = (detections || []).map(kind => labels[kind] || kind);
+    const names = persons || [];
+    return kinds.join(', ') + (names.length > 0 ? ` (${names.join(', ')})` : '');
+}
+
+/**
+ * Show the detection pictures of an event below the image of the popup
+ */
+function uiEventsShowCrops(event) {
+    const base = typeof transcodeServerUrl === 'string' ? transcodeServerUrl : '';
+    const figures = (event.crops || []).map(crop => {
+        const figure = document.createElement('figure');
+
+        const img = document.createElement('img');
+        img.alt = '';
+        img.src = `${base}/event-crop/${encodeURIComponent(crop.pictureId)}`;
+        img.addEventListener('error', () => figure.remove());
+
+        const caption = document.createElement('figcaption');
+        caption.textContent = uiEventsFormatDetections(crop.detections, crop.person ? [crop.person] : []);
+
+        figure.append(img, caption);
+        return figure;
+    });
+    document.getElementById('event-popup-crops').replaceChildren(...figures);
 }
 
 /**
@@ -122,11 +165,47 @@ function uiEventsLoad() {
     if (currentView !== 'events' || !eventsDeviceSn) return;
 
     if (!eventsDay) eventsDay = uiEventsToday();
+    eventsRefreshPending = false;   // this load is the refresh
     uiEventsClosePopup();
     uiEventsUpdateNav();
     uiEventsMessage('Loading...');
 
     eventsRequest = { deviceSn: eventsDeviceSn, date: uiEventsFormatDate(eventsDay) };
+    eufyDeviceGetEvents(eventsRequest.deviceSn, eventsRequest.date);
+}
+
+/**
+ * A live event of a device arrived (detection or new event picture): if its list of today is shown, reload it
+ * in the background. The station writes the event when the recording starts and completes it (end, detections)
+ * later, so the list is read several times.
+ * @param {string} deviceSn - Serial number of the device the event belongs to
+ */
+function uiEventsOnLiveEvent(deviceSn) {
+    if (!uiEventsShowsToday(deviceSn)) return;
+
+    eventsRefreshTimers.forEach(clearTimeout);
+    eventsRefreshTimers = EVENTS_REFRESH_DELAYS_MS.map(delay => setTimeout(uiEventsRefresh, delay));
+}
+
+/**
+ * True while the event list of today is shown for the device
+ */
+function uiEventsShowsToday(deviceSn) {
+    return currentView === 'events' && deviceSn === eventsDeviceSn && !!eventsDay && eventsDay.getTime() === uiEventsToday().getTime();
+}
+
+/**
+ * Reload the shown list of today without clearing it; waits while the popup is open (its event would move)
+ */
+function uiEventsRefresh() {
+    if (!uiEventsShowsToday(eventsDeviceSn) || eventsRequest) return;
+    if (popupIndex >= 0) {
+        eventsRefreshPending = true;
+        return;
+    }
+
+    eventsRefreshPending = false;
+    eventsRequest = { deviceSn: eventsDeviceSn, date: uiEventsFormatDate(eventsDay), background: true };
     eufyDeviceGetEvents(eventsRequest.deviceSn, eventsRequest.date);
 }
 
@@ -155,7 +234,14 @@ function uiEventsShow(message) {
 
     // Ignore answers of an earlier request (device or day changed meanwhile)
     if (!eventsRequest || result.serialNumber !== eventsRequest.deviceSn || result.date !== eventsRequest.date) return;
+    const background = eventsRequest.background;
     eventsRequest = null;
+
+    // A failed or outdated background refresh keeps the list as it is
+    if (background && (!message.success || popupIndex >= 0)) {
+        eventsRefreshPending = popupIndex >= 0;
+        return;
+    }
 
     if (!message.success) {
         eventsShown = [];
@@ -203,7 +289,13 @@ function uiEventsShow(message) {
         duration.textContent = uiEventsFormatDuration(event.durationSec || 0);
 
         meta.append(time, duration);
-        item.append(link, meta);
+
+        const detection = document.createElement('div');
+        detection.className = 'event-detection';
+        detection.textContent = uiEventsDetectionLabel(event);
+        detection.title = detection.textContent;
+
+        item.append(link, meta, detection);
         return item;
     });
 
@@ -225,12 +317,14 @@ function uiEventsOpenPopup(index) {
 
     const select = document.getElementById('device-select');
     const deviceName = select && select.selectedIndex >= 0 ? select.options[select.selectedIndex].textContent : event.deviceSn;
+    const detection = uiEventsDetectionLabel(event);
     document.getElementById('event-popup-title').textContent =
-        `${deviceName} - ${event.start || ''} (${uiEventsFormatDuration(event.durationSec || 0)})`;
+        `${deviceName} - ${event.start || ''} (${uiEventsFormatDuration(event.durationSec || 0)})${detection ? ` - ${detection}` : ''}`;
 
     const image = document.getElementById('event-popup-image');
     image.classList.toggle('no-thumb', !event.hasThumbnail);
     image.src = event.hasThumbnail ? uiEventsThumbUrl(event) : '';
+    uiEventsShowCrops(event);
 
     document.getElementById('event-popup-prev').disabled = index <= 0;
     document.getElementById('event-popup-next').disabled = index >= eventsShown.length - 1;
@@ -248,7 +342,9 @@ function uiEventsClosePopup() {
     popupIndex = -1;
     document.getElementById('event-popup').classList.remove('show');
     document.getElementById('event-popup-image').src = '';
+    document.getElementById('event-popup-crops').replaceChildren();
     inConfig = false;
+    if (eventsRefreshPending) uiEventsRefresh();
 }
 
 /**

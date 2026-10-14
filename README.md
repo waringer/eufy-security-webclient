@@ -11,7 +11,10 @@ A web-based client and video transcoding server using [eufy-sdk](https://github.
 - **Fast, low-latency playback** using Media Source Extensions (MSE)
 - **Auto-reconnect** for WebSocket connections with visual countdown
 - **Keyboard shortcuts** for PTZ control and camera presets
-- **Real-time notifications** for motion detection and person detection events
+- **Event history** of each camera, read from the HomeBase: one day at a time with thumbnail, time and duration
+- **Detection details per event**: what the station's AI recognised (person, vehicle, pet, sound) including the names of recognised persons and the detection pictures
+- **Live update of the event list** when a new event of the shown camera arrives
+- **Real-time notifications** for motion, person, pet, vehicle and sound detection events
 - **Smart picture update detection** with hash-based change tracking
 - **Dynamic transcoding configuration** via REST API and web UI
 - **Health check endpoint** for monitoring server status
@@ -30,6 +33,7 @@ eufy-security-webclient/
 │   │   ├── main.js               # Application initialization
 │   │   ├── ui.js                 # UI event handling and DOM manipulation
 │   │   ├── ui-deviceproperties.js # Device property definitions and display
+│   │   ├── ui-events.js          # Event list, event popup and live refresh
 │   │   ├── video.js              # Video player and MSE logic
 │   │   ├── ws-client.js          # WebSocket client communication
 │   │   └── theme-switcher.js     # Theme switching logic
@@ -37,6 +41,9 @@ eufy-security-webclient/
 │   └── favicon.ico       # Favicon
 ├── server/                # Server-side modules
 │   ├── eufy-client.js    # Eufy Security Client integration
+│   ├── eufy-sdk.js       # Loader for the ESM-only eufy-sdk
+│   ├── events.js         # Event history, thumbnails and detection pictures of a station
+│   ├── property-meta.js  # Device properties and their description for the web UI
 │   ├── transcode.js      # FFmpeg transcoding and snapshot extraction
 │   ├── ws-api.js         # WebSocket API server
 │   ├── rest.js           # REST API and HTTP server
@@ -51,7 +58,7 @@ eufy-security-webclient/
 
 ## Prerequisites
 - **Eufy account credentials**: Username, password, and country code for Eufy Cloud authentication
-- **Node.js >= 20**
+- **Node.js >= 24.5** (required by eufy-sdk)
 - **ffmpeg** (automatically installed in Docker)
 
 ## Installation
@@ -156,6 +163,7 @@ You can set these in your `docker-compose.yml`, Docker run command, or as enviro
 5. Use the control buttons or keyboard shortcuts for PTZ and presets
 6. Click "Config" to adjust transcoding settings in real-time (if available)
 7. Use the theme toggle button (🔆/🌙) to switch between light and dark mode
+8. Use the "Live" / "Events" switch in the toolbar to change between the live view and the event list
 
 **Note**: Device selection is locked while video is streaming to prevent conflicts. Stop the video before switching devices.
 
@@ -179,10 +187,22 @@ The server automatically extracts high-quality JPEG snapshots from the video str
 - Automatically updated whenever a device is streaming
 - Available for all WebSocket clients via picture property updates
 
+### Event List
+The "Events" view shows the events of the selected camera that are stored on its HomeBase:
+- **One day at a time**: step a day or a week back and forth, jump to today or reload the list
+- **Each event** shows its thumbnail, start time, duration and what was detected, e.g. `Person, Pet` or `Person (Alex)` for a recognised person
+- **Click an event** to open its image in a popup; the detection pictures (the parts of the image the AI recognised something in) are shown below it. The arrow keys or the buttons step through the events of the day, Escape closes the popup
+- **Live update**: while the list of today is shown, it reloads in the background when a new event of that camera arrives (several times, because the station completes an event only after its recording has ended)
+
+The event history and the pictures are read from the station over P2P and cached in `data/event-thumbs` and `data/event-crops`.
+
+**Note**: The detection details need a station that answers the combined event query of the Eufy app (verified with a HomeBase 3). Other stations show the event list without them. Person, vehicle, pet and sound were checked against the Eufy app; crying and package detections are mapped but not verified.
+
 ### Notifications
 The web client displays real-time notifications for:
 - **Motion detection events**
-- **Person detection events**
+- **Person and stranger detection events**
+- **Pet, vehicle, sound and crying detection events**
 
 The browser's native notification system is used.
 
@@ -198,6 +218,8 @@ The browser's native notification system is used.
 - **GET /config**: Get current configuration
 - **POST /config**: Update configuration (JSON body)
 - **GET /:serialNumber.mp4**: Video transcoding stream endpoint (e.g., `/T8410P11234567890.mp4`)
+- **GET /event-thumb/:recordId**: JPEG thumbnail of an event (only for events of a list the server delivered)
+- **GET /event-crop/:pictureId**: JPEG detection picture of an event (only for events of a list the server delivered)
 - **GET /quit**: Gracefully shut down the server
 - **Static files**: All files in `/public` are served at the root path
 
@@ -205,9 +227,10 @@ The browser's native notification system is used.
 The server provides a JSON-based WebSocket API at `ws://localhost:3001/api` for:
 - Real-time device status updates
 - Camera control commands
-- Event notifications (motion, person detection)
+- Event notifications (motion, person, pet, vehicle, sound detection)
+- Event history of a device (`device.get_events`)
 
-See [server/ws-api.js](server/ws-api.js) for the complete API specification.
+See [server/ws-api.js](server/ws-api.js) and the command handlers in [server/eufy-client.js](server/eufy-client.js) for details.
 
 ## Development
 
@@ -220,6 +243,9 @@ The project follows a modular architecture:
 **Backend (Node.js):**
 - **main.js**: Main entry point, initializes all modules
 - **server/eufy-client.js**: Integration with @mega-yfue/eufy-sdk (login incl. captcha/2FA, livestream, events)
+- **server/eufy-sdk.js**: Loads the ESM-only SDK into the CommonJS server
+- **server/events.js**: Event history, thumbnails and detection pictures, read from the station over P2P
+- **server/property-meta.js**: Device properties and their description for the generic property display
 - **server/transcode.js**: FFmpeg transcoding engine
 - **server/ws-api.js**: WebSocket API server for JSON-based communication
 - **server/rest.js**: REST API and HTTP server with static file serving
@@ -229,6 +255,7 @@ The project follows a modular architecture:
 - **js/main.js**: Application initialization and configuration
 - **js/ui.js**: UI event handlers and DOM manipulation
 - **js/ui-deviceproperties.js**: Device property definitions, formatting, and grouped display logic
+- **js/ui-events.js**: Event list with day navigation, event popup and live refresh
 - **js/video.js**: Video player implementation using Media Source Extensions (MSE)
 - **js/ws-client.js**: WebSocket client for server communication
 - **js/theme-switcher.js**: Theme switching logic with localStorage persistence
@@ -259,7 +286,7 @@ All code, comments, and variables are in English. The UI labels and messages are
 - Verify Eufy credentials in `data/config.json` are correct
 - Check server logs for authentication errors
 - Ensure port 3001 is not blocked by firewall
-- For 2FA-enabled accounts, you may need to disable 2FA temporarily or use app-specific passwords
+- Captcha and 2FA requests of the Eufy login are shown as a dialog in the web UI; keep it open during the first login
 - WebSocket connections automatically reconnect after 5 seconds if disconnected unexpectedly
 
 ### Performance issues
@@ -267,6 +294,11 @@ All code, comments, and variables are in English. The UI labels and messages are
 - Increase FFMPEG_THREADS based on your CPU cores
 - Lower VIDEO_SCALE resolution if needed
 - Use the Config UI to fine-tune transcoding parameters in real-time
+
+### Event list issues
+- "Events not available" means the station did not answer; the list needs a P2P connection to the HomeBase
+- Events without a detection label: the station stored no detection for them, or it does not support the detection query
+- A new event appears in the list a few seconds after it started; its duration and detections follow when the recording has ended
 
 ### Notification issues
 - Ensure browser notifications are enabled for the site
