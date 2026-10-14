@@ -922,6 +922,7 @@ function uiOpenConfigModal(config) {
     document.getElementById('config-transcoding-crf').value = config.TRANSCODING_CRF || '';
     document.getElementById('config-ffmpeg-threads').value = config.FFMPEG_THREADS || '';
     document.getElementById('config-short-keyframes').checked = config.FFMPEG_SHORT_KEYFRAMES || false;
+    document.getElementById('config-hwaccel').value = config.HWACCEL || 'none';
     document.getElementById('config-debug-mode').checked = debugMode;
     document.getElementById('config-log-level').value = String(config.LOG_LEVEL ?? 2);
     document.getElementById('config-ffmpeg-log-level').value = config.FFMPEG_LOG_LEVEL || 'warning';
@@ -986,6 +987,7 @@ function uiOpenConfigModal(config) {
             TRANSCODING_CRF: document.getElementById('config-transcoding-crf').value,
             FFMPEG_THREADS: document.getElementById('config-ffmpeg-threads').value,
             FFMPEG_SHORT_KEYFRAMES: document.getElementById('config-short-keyframes').checked,
+            HWACCEL: document.getElementById('config-hwaccel').value,
             LOG_LEVEL: parseInt(document.getElementById('config-log-level').value, 10),
             FFMPEG_LOG_LEVEL: document.getElementById('config-ffmpeg-log-level').value,
             SDK_LOG_LEVEL: document.getElementById('config-sdk-log-level').value

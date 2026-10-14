@@ -284,9 +284,10 @@ function initRestServer() {
 
         // Whitelist of allowed configuration keys for security
         const allowedKeys = ['EUFY_CONFIG', 'TRANSCODING_PRESET', 'TRANSCODING_CRF', 'VIDEO_SCALE', 'FFMPEG_THREADS', 'FFMPEG_SHORT_KEYFRAMES',
-            'LOG_LEVEL', 'FFMPEG_LOG_LEVEL', 'SDK_LOG_LEVEL'];
-        // Log levels must be one of the known values
+            'HWACCEL', 'LOG_LEVEL', 'FFMPEG_LOG_LEVEL', 'SDK_LOG_LEVEL'];
+        // Log levels and hardware acceleration must be one of the known values
         const validValues = {
+            HWACCEL: ['none', 'vaapi'],
             LOG_LEVEL: utils.LOG_LEVELS.map((_, level) => level),
             FFMPEG_LOG_LEVEL: utils.FFMPEG_LOG_LEVELS,
             SDK_LOG_LEVEL: utils.SDK_LOG_LEVELS
@@ -335,7 +336,7 @@ function initRestServer() {
             }
 
             // Determine which services need to be restarted based on changed fields
-            const transcodingFields = ['TRANSCODING_PRESET', 'TRANSCODING_CRF', 'VIDEO_SCALE', 'FFMPEG_THREADS', 'FFMPEG_SHORT_KEYFRAMES', 'FFMPEG_LOG_LEVEL'];
+            const transcodingFields = ['TRANSCODING_PRESET', 'TRANSCODING_CRF', 'VIDEO_SCALE', 'FFMPEG_THREADS', 'FFMPEG_SHORT_KEYFRAMES', 'HWACCEL', 'FFMPEG_LOG_LEVEL'];
             const eufyFields = ['EUFY_CONFIG'];
 
             const needsTranscodeRestart = updatedFields.some(field => transcodingFields.includes(field));

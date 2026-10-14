@@ -55,6 +55,8 @@ const DEFAULT_CONFIG = {
     VIDEO_SCALE: process.env.VIDEO_SCALE || '1280:-2',                // Video resolution scaling
     FFMPEG_THREADS: process.env.FFMPEG_THREADS || '4',                // Number of encoding threads
     FFMPEG_SHORT_KEYFRAMES: process.env.FFMPEG_SHORT_KEYFRAMES === 'true' || false,  // Use shorter GOP
+    HWACCEL: process.env.HWACCEL || 'none',                                          // Hardware acceleration ('none' | 'vaapi')
+    HWACCEL_DEVICE: process.env.HWACCEL_DEVICE || '/dev/dri/renderD128',             // VAAPI render device
     LOG_LEVEL: parseLogLevel(process.env.LOGGINGLEVEL, 2),                           // Server log level (0-4)
     FFMPEG_LOG_LEVEL: process.env.FFMPEG_MINLOGLEVEL || 'warning',                   // ffmpeg log level
     SDK_LOG_LEVEL: 'off',                                                            // Eufy SDK log level

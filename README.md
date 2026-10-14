@@ -17,6 +17,7 @@ A web-based client and video transcoding server using [eufy-sdk](https://github.
 - **Real-time notifications** for motion, person, pet, vehicle and sound detection events
 - **Smart picture update detection** with hash-based change tracking
 - **Dynamic transcoding configuration** via REST API and web UI
+- **Hardware acceleration** with Intel GPUs (VAAPI) for decoding, scaling and encoding on weak CPUs
 - **Debug view** in the web UI with the client log and the live server log (level filter, download)
 - **Log levels for server, ffmpeg and Eufy SDK** set in the web UI, applied without restart
 - **Health check endpoint** for monitoring server status
@@ -114,6 +115,7 @@ Configuration is managed through `data/config.json`. Create this file before fir
   "VIDEO_SCALE": "1280:-2",
   "FFMPEG_THREADS": "4",
   "FFMPEG_SHORT_KEYFRAMES": false,
+  "HWACCEL": "none",
   "LOG_LEVEL": 2,
   "FFMPEG_LOG_LEVEL": "warning",
   "SDK_LOG_LEVEL": "off"
@@ -133,6 +135,7 @@ Configuration is managed through `data/config.json`. Create this file before fir
 | VIDEO_SCALE             | 1280:-2                | ffmpeg video scaling |
 | FFMPEG_THREADS          | 4                      | Number of ffmpeg threads |
 | FFMPEG_SHORT_KEYFRAMES  | false                  | Use short keyframes (true/false) |
+| HWACCEL                 | none                   | Hardware acceleration: `none` (libx264) or `vaapi` (Intel GPU, see below) |
 | LOG_LEVEL               | 2 (or `LOGGINGLEVEL`)  | Server log level (0=error, 1=warn, 2=info, 3=debug, 4=trace; 4 also writes an ffmpeg report file) |
 | FFMPEG_LOG_LEVEL        | warning (or `FFMPEG_MINLOGLEVEL`) | ffmpeg log level (quiet ... trace) |
 | SDK_LOG_LEVEL           | off                    | Eufy SDK log level (off, error, warn, info, debug) |
@@ -147,6 +150,9 @@ Configuration is managed through `data/config.json`. Create this file before fir
 | VIDEO_SCALE             | 1280:-2                | ffmpeg video scaling |
 | FFMPEG_THREADS          | 4                      | Number of ffmpeg threads |
 | FFMPEG_SHORT_KEYFRAMES  | false                  | Use short keyframes (true/false) |
+| HWACCEL                 | none                   | Hardware acceleration (`none` / `vaapi`) |
+| HWACCEL_DEVICE          | /dev/dri/renderD128    | VAAPI render device |
+| LIBVA_DRIVER_NAME       | (auto)                 | VAAPI driver; set `i965` for older Intel GPUs (e.g. Braswell, Haswell) |
 | FFMPEG_MINLOGLEVEL      | warning                | Initial ffmpeg log level; `FFMPEG_LOG_LEVEL` in the configuration takes precedence |
 | STATIC_DIR              | ./public               | Path to static files |
 | DATA_DIR                | ./data                 | Path for persistent configuration storage |
@@ -157,6 +163,17 @@ You can set these in your `docker-compose.yml`, Docker run command, or as enviro
 
 
 **Note**: The configuration can be changed at runtime via the web UI (⚙ button) or the REST API. Changes are persisted to `data/config.json`. Changed transcoding settings restart a running ffmpeg, changed Eufy credentials reconnect to the Eufy Cloud, log levels apply at once.
+
+### Hardware Acceleration (Intel VAAPI)
+On weak CPUs (e.g. Celeron/Atom without AVX) decoding the H.265 stream of the camera is the main load. With `HWACCEL=vaapi` decoding, scaling and H.264 encoding run on the Intel GPU:
+
+1. Pass the GPU into the container: `--device /dev/dri:/dev/dri` (Docker run) or the `devices` section in `docker-compose.yml`
+2. Older GPUs need the i965 driver: `LIBVA_DRIVER_NAME=i965`; check the supported profiles with `apk add libva-utils && vainfo` in the container (`VAProfileHEVCMain : VAEntrypointVLD` and `VAProfileH264Main : VAEntrypointEncSlice` are needed)
+3. Select "VAAPI" in the configuration dialog (or set `HWACCEL=vaapi`)
+
+With VAAPI, `TRANSCODING_CRF` is used as constant quantizer (`-qp`); `TRANSCODING_PRESET` and `FFMPEG_THREADS` have no effect. The Docker image contains the Intel drivers (x86_64 only).
+
+Tested with a Celeron N3150 (Braswell, i965 driver): `VIDEO_SCALE` `1152:-2` (half the camera resolution) runs with low CPU load.
 
 
 ## Usage
@@ -314,6 +331,7 @@ All code, comments, and variables are in English. The UI labels and messages are
 - Adjust TRANSCODING_PRESET to a faster preset (e.g., `superfast` or `ultrafast`)
 - Increase FFMPEG_THREADS based on your CPU cores
 - Lower VIDEO_SCALE resolution if needed
+- Use Intel GPU hardware acceleration (`HWACCEL=vaapi`, see Configuration) on weak CPUs
 - Use the Config UI to fine-tune transcoding parameters in real-time
 
 ### Event list issues

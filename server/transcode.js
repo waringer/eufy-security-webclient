@@ -143,6 +143,46 @@ function startTranscoding() {
     aacInputStream = new PassThrough();     // Audio input
     outputStream = new PassThrough();       // fMP4 output
 
+    const useVaapi = CONFIG.HWACCEL === 'vaapi';
+    const gopSize = CONFIG.FFMPEG_SHORT_KEYFRAMES ? '15' : '30';
+    utils.log(`🎬 Encoder: ${useVaapi ? 'h264_vaapi' : 'libx264'}`, 'info');
+
+    // VAAPI: decode, scale and encode on the GPU (frames stay in GPU memory)
+    const [scaleWidth, scaleHeight] = (CONFIG.VIDEO_SCALE || '').split(':');
+    const vaapiInputArgs = [
+        '-hwaccel', 'vaapi',
+        '-hwaccel_device', CONFIG.HWACCEL_DEVICE,
+        '-hwaccel_output_format', 'vaapi',
+    ];
+    const vaapiVideoArgs = [
+        '-c:v', 'h264_vaapi',              // H.264 hardware encoder
+        '-vf', scaleWidth ? `scale_vaapi=w=${scaleWidth}:h=${scaleHeight || -2}` : 'scale_vaapi=format=nv12',
+        '-noautoscale',                    // No software scaler after a resolution change (cannot take GPU frames)
+        '-rc_mode', 'CQP',                 // Constant quantizer (closest to CRF)
+        '-qp', CONFIG.TRANSCODING_CRF,
+        '-bf', '0',                        // No B-frames for low latency
+        '-profile:v', 'main',              // H.264 profile
+        '-g', gopSize,                     // GOP size (keyframe interval)
+        '-keyint_min', gopSize,
+    ];
+
+    // Software: libx264, optimized for low CPU usage and latency
+    const x264VideoArgs = [
+        '-c:v', 'libx264',                 // H.264 encoder
+        ...(CONFIG.VIDEO_SCALE ? ['-vf', `scale=${CONFIG.VIDEO_SCALE}`] : []),  // Optional scaling
+        '-preset', CONFIG.TRANSCODING_PRESET,  // Encoding speed preset
+        '-tune', 'zerolatency',            // Zero-latency tuning
+        '-crf', CONFIG.TRANSCODING_CRF,    // Constant Rate Factor (quality)
+        '-profile:v', 'main',              // H.264 profile
+        '-level', '3.1',                   // H.264 level
+        '-g', gopSize,                     // GOP size (keyframe interval)
+        '-keyint_min', gopSize,
+        '-sc_threshold', '0',              // Disable scene change detection
+        '-pix_fmt', 'yuv420p',             // Pixel format for compatibility
+        '-x264-params', 'force-cfr=1',     // Constant frame rate
+        '-threads', CONFIG.FFMPEG_THREADS, // Encoding threads
+    ];
+
     /**
      * FFmpeg Arguments
      * Configured for low-latency live streaming with fMP4 output
@@ -153,6 +193,7 @@ function startTranscoding() {
         ...(utils.logLevel >= 4 ? ['-report'] : []),
 
         // Video input configuration (pipe:0 = stdin)
+        ...(useVaapi ? vaapiInputArgs : []),
         '-f', (videoMetadata.videoCodec === 'H264' ? 'h264' : 'hevc'),  // Input format
         '-flags', '+bsf_extract',          // Extract bitstream
         '-fflags', 'nobuffer+discardcorrupt',  // Low latency flags
@@ -173,18 +214,7 @@ function startTranscoding() {
         '-map', '1:a',                     // Audio from second input
 
         // Video encoding settings - optimized for low-latency streaming
-        '-c:v', 'libx264',                 // H.264 encoder
-        ...(CONFIG.VIDEO_SCALE ? ['-vf', `scale=${CONFIG.VIDEO_SCALE}`] : []),  // Optional scaling
-        '-preset', CONFIG.TRANSCODING_PRESET,  // Encoding speed preset
-        '-tune', 'zerolatency',            // Zero-latency tuning
-        '-crf', CONFIG.TRANSCODING_CRF,    // Constant Rate Factor (quality)
-        '-profile:v', 'main',              // H.264 profile
-        '-level', '3.1',                   // H.264 level
-        '-g', CONFIG.FFMPEG_SHORT_KEYFRAMES ? '15' : '30',  // GOP size (keyframe interval)
-        '-keyint_min', CONFIG.FFMPEG_SHORT_KEYFRAMES ? '15' : '30',
-        '-sc_threshold', '0',              // Disable scene change detection
-        '-pix_fmt', 'yuv420p',             // Pixel format for compatibility
-        '-x264-params', 'nal-hrd=cbr:force-cfr=1',  // CBR for consistent bitrate
+        ...(useVaapi ? vaapiVideoArgs : x264VideoArgs),
 
         // Audio encoding settings
         '-c:a', 'aac',                     // AAC audio codec
@@ -197,8 +227,6 @@ function startTranscoding() {
         '-min_frag_duration', CONFIG.FFMPEG_SHORT_KEYFRAMES ? '500000' : '1000000',
         '-muxdelay', '0',                  // No mux delay
         '-muxpreload', '0',                // No preload
-
-        '-threads', CONFIG.FFMPEG_THREADS, // Encoding threads
 
         'pipe:1'                           // Output to stdout
     ];

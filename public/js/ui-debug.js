@@ -21,11 +21,29 @@ function uiInitDebugPanel() {
         document.getElementById('debug-server-log').replaceChildren();
     });
 
-    document.getElementById('debug-server-download').addEventListener('click', () => {
-        window.location.href = transcodeServerUrl + '/logs';   // attachment, the page stays
-    });
+    document.getElementById('debug-server-download').addEventListener('click', uiDebugDownloadServerLog);
 
     document.getElementById('debug-server-filter').addEventListener('change', uiDebugApplyServerFilter);
+}
+
+/**
+ * Download the server log as file.
+ * Fetched as blob instead of navigating to /logs: a navigation makes some browsers (e.g. Firefox)
+ * close the WebSocket, even though the response is only an attachment.
+ */
+async function uiDebugDownloadServerLog() {
+    try {
+        const response = await fetch(transcodeServerUrl + '/logs');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'eufy-server.log';
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+        debugConsoleLog('Server log download failed:', e);
+    }
 }
 
 /**
