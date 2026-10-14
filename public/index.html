@@ -14,6 +14,7 @@
     <script src="js/ui-deviceproperties.js"></script>
     <script src="js/ws-client.js"></script>
     <script src="js/ui-events.js"></script>
+    <script src="js/ui-debug.js"></script>
     <script src="js/video.js"></script>
 </head>
 
@@ -22,10 +23,9 @@
         <h1><img src="favicon.ico" alt="Eufy Security Logo">Eufy Security Web Client</h1>
         <div class="header-actions">
             <button id="notification-btn">Activate Notifications</button>
-            <button id="device-video-btn" class="connect">Start Video</button>
-            <button id="connect-btn">Connect</button>
             <button id="config-btn" title="Configuration">⚙</button>
             <button id="theme-toggle-btn" title="Switch theme">🔆</button>
+            <button id="connect-btn" class="connect" title="Connect">⏻</button>
         </div>
     </div>
     <div class="container">
@@ -39,8 +39,10 @@
             </div>
             <div id="device-info"></div>
         </aside>
-        <main class="main-content">
-            <div id="device-toolbar"></div>
+        <main class="main-content" data-view="live">
+            <div id="device-toolbar">
+                <button id="device-video-btn" class="connect" hidden>Start Video</button>
+            </div>
             <div id="device-content">
                 <div id="device-picture"></div>
                 <div id="events-panel">
@@ -55,10 +57,31 @@
                     </div>
                     <div id="events-list"></div>
                 </div>
-                <details class="info-details">
-                    <summary>Received information</summary>
-                    <pre id="info"></pre>
-                </details>
+                <div id="debug-panel">
+                    <section class="debug-log">
+                        <div class="debug-log-header">
+                            <h3>Client</h3>
+                            <button id="debug-client-copy" title="Copy to clipboard">Copy</button>
+                            <button id="debug-client-clear" title="Clear">Clear</button>
+                        </div>
+                        <div id="debug-client-log" class="debug-log-lines"></div>
+                    </section>
+                    <section class="debug-log">
+                        <div class="debug-log-header">
+                            <h3>Server</h3>
+                            <select id="debug-server-filter" title="Show entries up to this level">
+                                <option value="0">error</option>
+                                <option value="1">warn</option>
+                                <option value="2">info</option>
+                                <option value="3">debug</option>
+                                <option value="4" selected>trace</option>
+                            </select>
+                            <button id="debug-server-clear" title="Clear view">Clear</button>
+                            <button id="debug-server-download" title="Download server log">Download</button>
+                        </div>
+                        <div id="debug-server-log" class="debug-log-lines"></div>
+                    </section>
+                </div>
             </div>
             <div class="status-bar">
                 <div>
@@ -129,6 +152,50 @@
                         <input type="checkbox" id="config-short-keyframes">
                         Short Keyframes
                     </label>
+                </div>
+
+                <h3>Debugging</h3>
+                <div class="config-field">
+                    <label for="config-debug-mode">
+                        <input type="checkbox" id="config-debug-mode">
+                        Show debug tab in this browser
+                    </label>
+                </div>
+                <div class="config-row">
+                <div class="config-field">
+                    <label for="config-log-level">Server Log Level:</label>
+                    <select id="config-log-level">
+                        <option value="0">error</option>
+                        <option value="1">warn</option>
+                        <option value="2">info</option>
+                        <option value="3">debug</option>
+                        <option value="4">trace</option>
+                    </select>
+                </div>
+                <div class="config-field">
+                    <label for="config-ffmpeg-log-level">FFmpeg Log Level:</label>
+                    <select id="config-ffmpeg-log-level">
+                        <option value="quiet">quiet</option>
+                        <option value="panic">panic</option>
+                        <option value="fatal">fatal</option>
+                        <option value="error">error</option>
+                        <option value="warning">warning</option>
+                        <option value="info">info</option>
+                        <option value="verbose">verbose</option>
+                        <option value="debug">debug</option>
+                        <option value="trace">trace</option>
+                    </select>
+                </div>
+                <div class="config-field">
+                    <label for="config-sdk-log-level">Eufy SDK Log Level:</label>
+                    <select id="config-sdk-log-level">
+                        <option value="off">off</option>
+                        <option value="error">error</option>
+                        <option value="warn">warn</option>
+                        <option value="info">info</option>
+                        <option value="debug">debug</option>
+                    </select>
+                </div>
                 </div>
             </div>
             <div class="modal-footer">

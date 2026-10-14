@@ -109,7 +109,39 @@ function initWebSocketServer(httpServer, port) {
         });
     });
 
+    // Forward new log entries to the clients that show the server log (debug tab)
+    utils.onLog(entry => {
+        const messageStr = JSON.stringify({ type: 'log', entries: [entry] });
+        wsClients.forEach(client => {
+            if (client.logSubscribed && client.readyState === client.OPEN) {
+                // No utils.log on failure: it would end up here again
+                try { client.send(messageStr); } catch (error) { /* client is going away */ }
+            }
+        });
+    });
+
     utils.log(`🔌 WebSocket API server initialized at ws://localhost:${port}/api`, 'info');
+}
+
+/**
+ * Handle Log Subscription Commands
+ * 'log.subscribe' sends the buffered server log and then every new entry, 'log.unsubscribe' stops that
+ * @param {WebSocket} ws - Client WebSocket connection
+ * @param {Object} message - Parsed JSON message object
+ * @returns {boolean} True if the message was a log command
+ */
+function handleLogCommand(ws, message) {
+    switch (message.command) {
+        case 'log.subscribe':
+            ws.logSubscribed = true;
+            wsSendToClient(ws, { type: 'log', entries: utils.getLogBuffer(), reset: true });
+            return true;
+        case 'log.unsubscribe':
+            ws.logSubscribed = false;
+            return true;
+        default:
+            return false;
+    }
 }
 
 /**
@@ -121,6 +153,9 @@ function initWebSocketServer(httpServer, port) {
  */
 function handleWebSocketMessage(ws, message) {
     utils.log(`📨 WebSocket API message: ${JSON.stringify(message)}`, 'debug');
+
+    // Server log subscription is handled here, independent of the Eufy handlers
+    if (handleLogCommand(ws, message)) return;
 
     // Validate message has required command field
     if (!message.command) {

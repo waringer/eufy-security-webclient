@@ -17,6 +17,8 @@ A web-based client and video transcoding server using [eufy-sdk](https://github.
 - **Real-time notifications** for motion, person, pet, vehicle and sound detection events
 - **Smart picture update detection** with hash-based change tracking
 - **Dynamic transcoding configuration** via REST API and web UI
+- **Debug view** in the web UI with the client log and the live server log (level filter, download)
+- **Log levels for server, ffmpeg and Eufy SDK** set in the web UI, applied without restart
 - **Health check endpoint** for monitoring server status
 - **Docker support** for easy deployment
 - **Modular architecture** with separated UI, video, and WebSocket logic
@@ -34,6 +36,7 @@ eufy-security-webclient/
 │   │   ├── ui.js                 # UI event handling and DOM manipulation
 │   │   ├── ui-deviceproperties.js # Device property definitions and display
 │   │   ├── ui-events.js          # Event list, event popup and live refresh
+│   │   ├── ui-debug.js           # Debug view (client and server log)
 │   │   ├── video.js              # Video player and MSE logic
 │   │   ├── ws-client.js          # WebSocket client communication
 │   │   └── theme-switcher.js     # Theme switching logic
@@ -110,7 +113,10 @@ Configuration is managed through `data/config.json`. Create this file before fir
   "TRANSCODING_CRF": "23",
   "VIDEO_SCALE": "1280:-2",
   "FFMPEG_THREADS": "4",
-  "FFMPEG_SHORT_KEYFRAMES": false
+  "FFMPEG_SHORT_KEYFRAMES": false,
+  "LOG_LEVEL": 2,
+  "FFMPEG_LOG_LEVEL": "warning",
+  "SDK_LOG_LEVEL": "off"
 }
 ```
 
@@ -127,18 +133,21 @@ Configuration is managed through `data/config.json`. Create this file before fir
 | VIDEO_SCALE             | 1280:-2                | ffmpeg video scaling |
 | FFMPEG_THREADS          | 4                      | Number of ffmpeg threads |
 | FFMPEG_SHORT_KEYFRAMES  | false                  | Use short keyframes (true/false) |
+| LOG_LEVEL               | 2 (or `LOGGINGLEVEL`)  | Server log level (0=error, 1=warn, 2=info, 3=debug, 4=trace; 4 also writes an ffmpeg report file) |
+| FFMPEG_LOG_LEVEL        | warning (or `FFMPEG_MINLOGLEVEL`) | ffmpeg log level (quiet ... trace) |
+| SDK_LOG_LEVEL           | off                    | Eufy SDK log level (off, error, warn, info, debug) |
 
 ### Environment Variables
 
 | Variable                | Default                | Description |
 |-------------------------|------------------------|-------------|
-| LOGGINGLEVEL            | 2                      | Logging verbosity (0=error, 1=warn, 2=info, 3=debug, 4=trace) |
+| LOGGINGLEVEL            | 2                      | Initial server log level (0=error, 1=warn, 2=info, 3=debug, 4=trace); `LOG_LEVEL` in the configuration takes precedence |
 | TRANSCODING_PRESET      | ultrafast              | ffmpeg preset for transcoding |
 | TRANSCODING_CRF         | 23                     | ffmpeg CRF value (quality) |
 | VIDEO_SCALE             | 1280:-2                | ffmpeg video scaling |
 | FFMPEG_THREADS          | 4                      | Number of ffmpeg threads |
 | FFMPEG_SHORT_KEYFRAMES  | false                  | Use short keyframes (true/false) |
-| FFMPEG_MINLOGLEVEL      | warning                | ffmpeg log level |
+| FFMPEG_MINLOGLEVEL      | warning                | Initial ffmpeg log level; `FFMPEG_LOG_LEVEL` in the configuration takes precedence |
 | STATIC_DIR              | ./public               | Path to static files |
 | DATA_DIR                | ./data                 | Path for persistent configuration storage |
 
@@ -147,7 +156,7 @@ You can set these in your `docker-compose.yml`, Docker run command, or as enviro
 **Note**: When settings are defined in both Environment Variables and `config.json`, values in `data/config.json` take priority over the Environment Variables.
 
 
-**Note**: Transcoding configuration can be changed dynamically at runtime via the web UI (Config button) or REST API endpoints. Changes are persisted to `data/config.json`.
+**Note**: The configuration can be changed at runtime via the web UI (⚙ button) or the REST API. Changes are persisted to `data/config.json`. Changed transcoding settings restart a running ffmpeg, changed Eufy credentials reconnect to the Eufy Cloud, log levels apply at once.
 
 
 ## Usage
@@ -159,13 +168,15 @@ You can set these in your `docker-compose.yml`, Docker run command, or as enviro
    - Click section headers to expand/collapse property groups
    - Click the pin icon 📌 to keep important sections always visible
    - Pinned sections remain open and are remembered in your browser
-4. Click "Start Video" to begin streaming
+4. Click "Start Video" (next to the "Live" / "Events" switch) to begin streaming
 5. Use the control buttons or keyboard shortcuts for PTZ and presets
-6. Click "Config" to adjust transcoding settings in real-time (if available)
+6. Click ⚙ to adjust the configuration (Eufy account, transcoding, logging) in real-time (if available)
 7. Use the theme toggle button (🔆/🌙) to switch between light and dark mode
-8. Use the "Live" / "Events" switch in the toolbar to change between the live view and the event list
+8. Use the "Live" / "Events" switch in the toolbar to change between the live view and the event list ("Debug" is added in debug mode)
 
-**Note**: Device selection is locked while video is streaming to prevent conflicts. Stop the video before switching devices.
+The ⏻ icon at the right of the header shows the connection to the server (green = connected, orange = connecting, red = disconnected); click it to disconnect or connect.
+
+**Note**: Device selection and the device refresh button are locked while video is streaming to prevent conflicts. Stop the video before switching devices.
 
 ### Direct Video Stream Access
 You can access the transcoded video stream directly without using the web interface:
@@ -220,6 +231,7 @@ The browser's native notification system is used.
 - **GET /:serialNumber.mp4**: Video transcoding stream endpoint (e.g., `/T8410P11234567890.mp4`)
 - **GET /event-thumb/:recordId**: JPEG thumbnail of an event (only for events of a list the server delivered)
 - **GET /event-crop/:pictureId**: JPEG detection picture of an event (only for events of a list the server delivered)
+- **GET /logs**: The last 1000 server log entries as text file
 - **GET /quit**: Gracefully shut down the server
 - **Static files**: All files in `/public` are served at the root path
 
@@ -229,13 +241,20 @@ The server provides a JSON-based WebSocket API at `ws://localhost:3001/api` for:
 - Camera control commands
 - Event notifications (motion, person, pet, vehicle, sound detection)
 - Event history of a device (`device.get_events`)
+- Server log (`log.subscribe` sends the buffered entries and then every new one, `log.unsubscribe` stops it)
 
 See [server/ws-api.js](server/ws-api.js) and the command handlers in [server/eufy-client.js](server/eufy-client.js) for details.
 
 ## Development
 
 ### Debug Mode
-Enable client debug mode by setting `debugMode = true` at the top of `public/js/main.js` to see detailed console logs and additional debug information in the UI. For the server, set or change the `LOGGINGLEVEL` environment variable.
+Open the configuration dialog (⚙) and enable "Show debug tab in this browser". The setting is stored per browser. It turns on detailed console logs and adds a "Debug" view next to "Live" / "Events" with:
+- the client log (requests and received data of this web client)
+- the server log (the last 1000 entries, then live), with a level filter and a download (`GET /logs`)
+
+The server, ffmpeg and Eufy SDK log levels are set in the same dialog and apply without restarting the server (a running ffmpeg is restarted for a new ffmpeg level). The Eufy password is masked in the server log.
+
+**Note**: The server log is visible to everyone who can open the web UI. With the Eufy SDK log level `debug`, SDK internals are logged as well; use it for troubleshooting only.
 
 ### Architecture
 The project follows a modular architecture:
@@ -249,13 +268,14 @@ The project follows a modular architecture:
 - **server/transcode.js**: FFmpeg transcoding engine
 - **server/ws-api.js**: WebSocket API server for JSON-based communication
 - **server/rest.js**: REST API and HTTP server with static file serving
-- **server/utils.js**: Configuration management and logging utilities
+- **server/utils.js**: Configuration management, logging (log levels, log buffer for the web UI, SDK logger)
 
 **Frontend (Browser):**
 - **js/main.js**: Application initialization and configuration
 - **js/ui.js**: UI event handlers and DOM manipulation
 - **js/ui-deviceproperties.js**: Device property definitions, formatting, and grouped display logic
 - **js/ui-events.js**: Event list with day navigation, event popup and live refresh
+- **js/ui-debug.js**: Debug view with client log and live server log
 - **js/video.js**: Video player implementation using Media Source Extensions (MSE)
 - **js/ws-client.js**: WebSocket client for server communication
 - **js/theme-switcher.js**: Theme switching logic with localStorage persistence
@@ -279,12 +299,13 @@ All code, comments, and variables are in English. The UI labels and messages are
 ### Video not playing
 - Verify ffmpeg is installed (for local installations)
 - Check browser console for errors
+- Check the server log for ffmpeg messages; raise the ffmpeg log level for more details
 - If you get a 409 error, another device is currently streaming - wait until it finishes
 - Ensure the selected device supports video streaming
 
 ### Connection issues
 - Verify Eufy credentials in `data/config.json` are correct
-- Check server logs for authentication errors
+- Check the server log for authentication errors (debug view in the web UI, or the console / `docker logs`); set the Eufy SDK log level to `debug` for details of the login
 - Ensure port 3001 is not blocked by firewall
 - Captcha and 2FA requests of the Eufy login are shown as a dialog in the web UI; keep it open during the first login
 - WebSocket connections automatically reconnect after 5 seconds if disconnected unexpectedly

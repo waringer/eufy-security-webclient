@@ -163,6 +163,7 @@ async function connect(eufyConfig) {
             password: eufyConfig.password,
             countryCode: eufyConfig.country,
             store: new sdk.FileSessionStore(path.join(eufyConfig.persistentDir, 'eufy-session.json')),
+            logger: utils.createSdkLogger(),   // filtered by SDK_LOG_LEVEL
         });
         registerClientEvents(eufyClient);
 

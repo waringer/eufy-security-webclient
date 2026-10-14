@@ -276,10 +276,38 @@ function initRestServer() {
      */
     app.post('/config', (req, res) => {
         const newConfig = req.body;
-        utils.log(`📝 Config update requested: ${JSON.stringify(newConfig)}`, 'debug');
+        // Never write the password into the log (the log is visible in the web UI)
+        const loggedConfig = newConfig.EUFY_CONFIG && 'password' in newConfig.EUFY_CONFIG
+            ? { ...newConfig, EUFY_CONFIG: { ...newConfig.EUFY_CONFIG, password: '***' } }
+            : newConfig;
+        utils.log(`📝 Config update requested: ${JSON.stringify(loggedConfig)}`, 'debug');
 
         // Whitelist of allowed configuration keys for security
-        const allowedKeys = ['EUFY_CONFIG', 'TRANSCODING_PRESET', 'TRANSCODING_CRF', 'VIDEO_SCALE', 'FFMPEG_THREADS', 'FFMPEG_SHORT_KEYFRAMES'];
+        const allowedKeys = ['EUFY_CONFIG', 'TRANSCODING_PRESET', 'TRANSCODING_CRF', 'VIDEO_SCALE', 'FFMPEG_THREADS', 'FFMPEG_SHORT_KEYFRAMES',
+            'LOG_LEVEL', 'FFMPEG_LOG_LEVEL', 'SDK_LOG_LEVEL'];
+        // Log levels must be one of the known values
+        const validValues = {
+            LOG_LEVEL: utils.LOG_LEVELS.map((_, level) => level),
+            FFMPEG_LOG_LEVEL: utils.FFMPEG_LOG_LEVELS,
+            SDK_LOG_LEVEL: utils.SDK_LOG_LEVELS
+        };
+        if ('LOG_LEVEL' in newConfig) newConfig.LOG_LEVEL = parseInt(newConfig.LOG_LEVEL, 10);
+        const invalid = Object.keys(validValues).filter(key => key in newConfig && !validValues[key].includes(newConfig[key]));
+        if (invalid.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid value for ${invalid.join(', ')}`
+            });
+        }
+
+        if (!Object.keys(newConfig).some(key => allowedKeys.includes(key))) {
+            return res.status(400).json({
+                success: false,
+                message: 'No valid configuration fields provided',
+                allowedFields: allowedKeys
+            });
+        }
+
         const updatedFields = [];
 
         let CONFIG = utils.loadConfig();
@@ -299,14 +327,22 @@ function initRestServer() {
             utils.log(`✅ Config updated: ${updatedFields.join(', ')}`, 'debug');
 
             // Persist configuration changes to disk
-            const saved = utils.saveConfig(CONFIG);
+            if (!utils.saveConfig(CONFIG)) {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Configuration could not be saved (see server log)'
+                });
+            }
 
             // Determine which services need to be restarted based on changed fields
-            const transcodingFields = ['TRANSCODING_PRESET', 'TRANSCODING_CRF', 'VIDEO_SCALE', 'FFMPEG_THREADS', 'FFMPEG_SHORT_KEYFRAMES'];
+            const transcodingFields = ['TRANSCODING_PRESET', 'TRANSCODING_CRF', 'VIDEO_SCALE', 'FFMPEG_THREADS', 'FFMPEG_SHORT_KEYFRAMES', 'FFMPEG_LOG_LEVEL'];
             const eufyFields = ['EUFY_CONFIG'];
 
             const needsTranscodeRestart = updatedFields.some(field => transcodingFields.includes(field));
             const needsEufyRestart = updatedFields.some(field => eufyFields.includes(field));
+
+            // Server and SDK log level apply at once, no restart needed
+            utils.applyLogConfig(CONFIG);
 
             if (needsTranscodeRestart) {
                 utils.log('🔄 Restarting transcoding due to config changes', 'debug');
@@ -324,16 +360,32 @@ function initRestServer() {
                 success: true,
                 message: 'Configuration updated successfully',
                 updatedFields: updatedFields,
-                saved: saved,
+                saved: true,
                 config: CONFIG
             });
         } else {
-            res.status(400).json({
-                success: false,
-                message: 'No valid configuration fields provided',
-                allowedFields: allowedKeys
+            // Valid fields, but nothing changed: not an error
+            res.json({
+                success: true,
+                message: 'Configuration unchanged',
+                updatedFields: [],
+                saved: true,
+                config: CONFIG
             });
         }
+    });
+
+    /**
+     * Server Log Download
+     * Route: GET /logs
+     * Returns the buffered server log (last entries) as text file
+     */
+    app.get('/logs', (req, res) => {
+        const text = utils.getLogBuffer()
+            .map(entry => `${entry.time} [${entry.level.toUpperCase()}] ${entry.message}`)
+            .join('\n');
+        res.setHeader('Content-Disposition', 'attachment; filename="eufy-server.log"');
+        res.type('text/plain').send(text + '\n');
     });
 
     /**

@@ -7,8 +7,21 @@
  * Dependencies: ui.js, ws-client.js, video.js
  */
 
-// Debug mode toggle for development logging
-const debugMode = false; // Set to true to enable debug logging
+// Debug mode (console logging and debug tab), set per browser in the configuration dialog
+const localStorageKeyDebugMode = 'eufyWebClientDebugMode';
+let debugMode = false;
+try { debugMode = localStorage.getItem(localStorageKeyDebugMode) === 'true'; } catch (e) { /* storage not available */ }
+
+/**
+ * Set Debug Mode
+ * Stores the setting for this browser and shows / hides the debug tab
+ * @param {boolean} enabled - True to enable debug mode
+ */
+function setDebugMode(enabled) {
+    debugMode = enabled;
+    try { localStorage.setItem(localStorageKeyDebugMode, String(enabled)); } catch (e) { /* storage not available */ }
+    uiUpdateDebugAvailability();
+}
 
 // Global configuration state
 let transcodeConfig = null;
@@ -52,7 +65,7 @@ function restGetConfig(callback) {
  */
 function restPostConfig(newConfig) {
     // Send POST request to save config
-    fetch('/config', {
+    return fetch('/config', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -71,7 +84,7 @@ function restPostConfig(newConfig) {
         })
         .catch(err => {
             debugConsoleLog('Error in POST /config:', err);
-            return err;
+            return err.message || String(err);
         });
 }
 

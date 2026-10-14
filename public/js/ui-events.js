@@ -1,8 +1,9 @@
 // Event list of the selected device: the events of one day from the station's history (with thumbnails).
-// The main area shows either the live view / picture or the event list; a switch in the toolbar changes the view.
+// The main area shows either the live view / picture, the event list or (debug mode) the debug logs;
+// a switch in the toolbar changes the view.
 // A click on an event opens its image in a popup.
 
-let currentView = 'live';       // 'live' | 'events'
+let currentView = 'live';       // 'live' | 'events' | 'debug'
 
 let eventsDeviceSn = null;      // Device the list belongs to
 let eventsDay = null;           // Displayed day (local date, midnight); kept when the device changes
@@ -119,14 +120,16 @@ function uiEventsShiftDay(days) {
 }
 
 /**
- * Switch the main area between the live view / picture ('live') and the event list ('events')
- * @param {string} view - 'live' or 'events'
+ * Switch the main area between the live view / picture ('live'), the event list ('events') and the debug logs ('debug')
+ * @param {string} view - 'live', 'events' or 'debug' (only in debug mode)
  */
 function uiSetView(view) {
-    currentView = view === 'events' ? 'events' : 'live';
+    const previous = currentView;
+    currentView = view === 'events' || (view === 'debug' && debugMode) ? view : 'live';
     document.querySelector('.main-content').dataset.view = currentView;
     uiUpdateViewSwitch();
     if (currentView === 'events') uiEventsLoad();
+    if (previous !== currentView && (previous === 'debug' || currentView === 'debug')) uiDebugOnViewChange(currentView === 'debug');
 }
 
 /**
@@ -146,7 +149,9 @@ function uiCreateViewSwitch() {
     const container = document.createElement('div');
     container.id = 'view-switch';
 
-    [['live', 'Live'], ['events', 'Events']].forEach(([view, label]) => {
+    const views = [['live', 'Live'], ['events', 'Events']];
+    if (debugMode) views.push(['debug', 'Debug']);
+    views.forEach(([view, label]) => {
         const button = document.createElement('button');
         button.dataset.view = view;
         button.textContent = label;

@@ -12,6 +12,8 @@
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const util = require('util');
+const EventEmitter = require('events');
 
 // Development mode flag (enables additional debug features)
 const isDev = process.env.NODE_ENV === 'development' || process.env.DEV === 'true';
@@ -21,8 +23,21 @@ const DATA_DIR = process.env.DATA_DIR || path.join(require.main.path, 'data');
 const SNAPSHOT_DIR = path.join(DATA_DIR, 'snapshots');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const PICTURE_HASH_FILE = path.join(DATA_DIR, 'picture-hashes.json');
-// Logging level: 0=error, 1=warn, 2=info, 3=debug
-const LOGGINGLEVEL = process.env.LOGGINGLEVEL || '2';
+// Server log levels (index = numeric level): 0=error, 1=warn, 2=info, 3=debug, 4=trace
+const LOG_LEVELS = ['error', 'warn', 'info', 'debug', 'trace'];
+// Eufy SDK log levels ('off' = SDK stays silent)
+const SDK_LOG_LEVELS = ['off', 'error', 'warn', 'info', 'debug'];
+// ffmpeg -loglevel values
+const FFMPEG_LOG_LEVELS = ['quiet', 'panic', 'fatal', 'error', 'warning', 'info', 'verbose', 'debug', 'trace'];
+
+// Current levels; start with the environment, replaced by the configuration below
+let logLevel = parseLogLevel(process.env.LOGGINGLEVEL, 2);
+let sdkLogLevel = 'off';
+
+// Last log entries for the web UI (debug tab) and live listeners
+const LOG_BUFFER_SIZE = 1000;
+const logBuffer = [];
+const logEmitter = new EventEmitter();
 
 /**
  * Default Configuration
@@ -40,16 +55,22 @@ const DEFAULT_CONFIG = {
     VIDEO_SCALE: process.env.VIDEO_SCALE || '1280:-2',                // Video resolution scaling
     FFMPEG_THREADS: process.env.FFMPEG_THREADS || '4',                // Number of encoding threads
     FFMPEG_SHORT_KEYFRAMES: process.env.FFMPEG_SHORT_KEYFRAMES === 'true' || false,  // Use shorter GOP
+    LOG_LEVEL: parseLogLevel(process.env.LOGGINGLEVEL, 2),                           // Server log level (0-4)
+    FFMPEG_LOG_LEVEL: process.env.FFMPEG_MINLOGLEVEL || 'warning',                   // ffmpeg log level
+    SDK_LOG_LEVEL: 'off',                                                            // Eufy SDK log level
 };
 
 // Set of currently active streaming HTTP clients
 let activeStreamClients = new Set();
 
-log('🔧 Utils module initialized', 'debug');
-log(`🔧 Development mode: ${isDev}`, 'info');
-
 // Ensure data directory exists on module load
 checkDataDir();
+
+// Log levels from the saved configuration (fall back to the environment)
+applyLogConfig(loadConfig());
+
+log('🔧 Utils module initialized', 'debug');
+log(`🔧 Development mode: ${isDev}`, 'info');
 
 /**
  * Ensure Data Directory Exists
@@ -160,35 +181,99 @@ function clearActiveStreamClients() {
 }
 
 /**
- * Central Logging Function
- * Provides severity-based logging with configurable levels
- * @param {string} message - Log message to output
- * @param {string} severity - Log level: 'error', 'warn', 'info', 'debug'
+ * Parse Log Level
+ * @param {*} value - Numeric level (number or string)
+ * @param {number} fallback - Level used when value is not a valid level
+ * @returns {number} Level 0-4
  */
-function log(message, severity = 'info') {
-    const levels = ['error', 'warn', 'info', 'debug', 'trace'];
-    const msgLevel = levels.indexOf(severity);
-    if (msgLevel === -1) return;
-    if (LOGGINGLEVEL < 0) LOGGINGLEVEL = 0;
-    // Only log if message severity is at or below configured level
-    if (msgLevel > LOGGINGLEVEL) return;
+function parseLogLevel(value, fallback) {
+    const level = parseInt(value, 10);
+    return Number.isInteger(level) && level >= 0 && level < LOG_LEVELS.length ? level : fallback;
+}
 
-    const prefix = {
-        trace: '[TRACE]',
-        debug: '[DEBUG]',
-        info: '[INFO]',
-        warn: '[WARN]',
-        error: '[ERROR]',
-    }[severity] || '';
+/**
+ * Apply Log Configuration
+ * Takes the log levels of a configuration object (server and SDK level; ffmpeg reads its level on start)
+ * @param {Object} config - Configuration with LOG_LEVEL / SDK_LOG_LEVEL
+ */
+function applyLogConfig(config) {
+    logLevel = parseLogLevel(config.LOG_LEVEL, logLevel);
+    sdkLogLevel = SDK_LOG_LEVELS.includes(config.SDK_LOG_LEVEL) ? config.SDK_LOG_LEVEL : sdkLogLevel;
+}
+
+/**
+ * Write Log Entry
+ * Writes an entry to the console, the log buffer and the live listeners (no level check)
+ * @param {string} severity - 'error', 'warn', 'info', 'debug' or 'trace'
+ * @param {string} message - Log message
+ */
+function writeLog(severity, message) {
+    const now = new Date();
+    const entry = { time: now.toISOString(), level: severity, message: String(message) };
+
+    logBuffer.push(entry);
+    if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
+
+    // Local time for the console, the browser formats the ISO time itself
+    const pad = (n, len = 2) => String(n).padStart(len, '0');
+    const time = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
+    const line = `${time} [${severity.toUpperCase()}] ${entry.message}`;
 
     // Route to appropriate console method based on severity
     if (severity === 'error') {
-        console.error(`${prefix} ${message}`);
+        console.error(line);
     } else if (severity === 'warn') {
-        console.warn(`${prefix} ${message}`);
+        console.warn(line);
     } else {
-        console.log(`${prefix} ${message}`);
+        console.log(line);
     }
+
+    logEmitter.emit('log', entry);
+}
+
+/**
+ * Central Logging Function
+ * Provides severity-based logging with configurable levels
+ * @param {string} message - Log message to output
+ * @param {string} severity - Log level: 'error', 'warn', 'info', 'debug', 'trace'
+ */
+function log(message, severity = 'info') {
+    const msgLevel = LOG_LEVELS.indexOf(severity);
+    // Only log if message severity is at or below configured level
+    if (msgLevel === -1 || msgLevel > logLevel) return;
+
+    writeLog(severity, message);
+}
+
+/**
+ * Create SDK Logger
+ * Logger object for the Eufy SDK; its lines are prefixed with [SDK] and filtered by the SDK log level only
+ * (checked on every call, so a level change needs no client restart)
+ * @returns {Object} Logger with debug/info/warn/error methods
+ */
+function createSdkLogger() {
+    const write = (severity) => (message, ...args) => {
+        if (sdkLogLevel === 'off' || SDK_LOG_LEVELS.indexOf(severity) > SDK_LOG_LEVELS.indexOf(sdkLogLevel)) return;
+        const extra = args.map(arg => typeof arg === 'string' ? arg : util.inspect(arg, { depth: 3, breakLength: Infinity }));
+        writeLog(severity, ['[SDK]', message, ...extra].join(' '));
+    };
+    return { debug: write('debug'), info: write('info'), warn: write('warn'), error: write('error') };
+}
+
+/**
+ * Get Log Buffer
+ * @returns {Object[]} Copy of the last log entries ({ time, level, message })
+ */
+function getLogBuffer() {
+    return logBuffer.slice();
+}
+
+/**
+ * Listen to Log Entries
+ * @param {Function} listener - Called with every new log entry ({ time, level, message })
+ */
+function onLog(listener) {
+    logEmitter.on('log', listener);
 }
 
 /**
@@ -346,7 +431,15 @@ module.exports = {
     get isDev() { return isDev; },
     get dataDir() { return DATA_DIR; },
     get snapshotDir() { return SNAPSHOT_DIR; },
+    get logLevel() { return logLevel; },
 
     // Logging
-    log
+    log,
+    applyLogConfig,
+    createSdkLogger,
+    getLogBuffer,
+    onLog,
+    LOG_LEVELS,
+    SDK_LOG_LEVELS,
+    FFMPEG_LOG_LEVELS
 };

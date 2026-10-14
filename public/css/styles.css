@@ -82,6 +82,22 @@ body {
     gap: 0.75rem;
 }
 
+/* Connect button is an icon; its color shows the connection state */
+#connect-btn {
+    font-size: 1.1rem;
+    line-height: 1;
+    color: var(--text-alert);
+}
+
+#connect-btn.disconnect {
+    color: var(--text-success);
+}
+
+#connect-btn.connecting,
+#connect-btn.reconnect {
+    color: orange;
+}
+
 h1 {
     font-size: 1.5rem;
     font-weight: 600;
@@ -389,35 +405,72 @@ h1 img {
     transform: rotateY(180deg);
 }
 
-#device-update-btn,
-#device-video-btn {
+#device-update-btn {
     display: none;
 }
 
-/* ========== Info Panel ========== */
-.info-details {
-    margin-top: 2em;
-    max-width: 90vw;
+/* ========== Debug Panel ========== */
+/* Client and server log side by side, each scrolls on its own */
+.main-content[data-view="debug"] #device-content {
+    display: flex;
 }
 
-pre {
-    background: var(--bg-secondary);
-    padding: 1em;
-    border-radius: 5px;
-    border: 1px solid var(--border-light);
-    color: var(--text-primary);
+#debug-panel {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1rem;
+    padding: 1rem 1.5rem;
 }
 
-.info-details summary {
-    font-weight: bold;
-    cursor: pointer;
-    color: var(--text-primary);
+.debug-log {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
-.info-details pre {
-    max-height: 300px;
+.debug-log-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.debug-log-header h3 {
+    flex: 1;
+    font-size: 1rem;
+}
+
+.debug-log-lines {
+    flex: 1;
+    min-height: 0;
     overflow: auto;
-    margin-top: 1em;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: 5px;
+    padding: 0.5em;
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+}
+
+.debug-line {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.debug-line.level-error {
+    color: var(--text-alert);
+}
+
+.debug-line.level-warn {
+    color: orange;
+}
+
+.debug-line.level-debug,
+.debug-line.level-trace {
+    color: var(--text-tertiary);
 }
 
 #device-video-errorMessage {
@@ -455,6 +508,12 @@ button:hover {
 
 button:active {
     background-color: var(--button-bg-active);
+}
+
+button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background-color: var(--button-bg);
 }
 
 select {
@@ -550,6 +609,10 @@ span.false {
     width: 90%;
     max-width: 600px;
     box-shadow: 0 4px 20px var(--shadow-light);
+    /* Never taller than the window: header and footer stay, only the body scrolls */
+    max-height: calc(100vh - 2rem);
+    display: flex;
+    flex-direction: column;
 }
 
 .modal-header {
@@ -579,10 +642,20 @@ span.false {
 
 .modal-body {
     padding: 1.5em;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .config-field {
     margin-bottom: 1.2em;
+}
+
+/* Several short fields side by side (wrap on narrow windows) */
+.config-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0 1em;
 }
 
 .config-field label {
@@ -698,10 +771,12 @@ span.false {
 }
 
 /* ========== Event list ========== */
-/* The main area shows either the live view / picture or the event list (switch in the toolbar) */
-.main-content[data-view="events"] #device-picture,
-.main-content[data-view="live"] #events-panel,
-.main-content[data-view="events"] #toolbar-presets {
+/* The main area shows either the live view / picture, the event list or the debug logs (switch in the toolbar) */
+.main-content:not([data-view="live"]) #device-picture,
+.main-content:not([data-view="events"]) #events-panel,
+.main-content:not([data-view="debug"]) #debug-panel,
+.main-content:not([data-view="live"]) #toolbar-presets,
+.main-content:not([data-view="live"]) #device-video-btn {
     display: none;
 }
 

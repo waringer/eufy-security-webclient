@@ -17,10 +17,6 @@ const eventEmitter = require('events');
 
 const utils = require('./utils');
 
-// Environment configuration
-const LOGGINGLEVEL = process.env.LOGGINGLEVEL || '2';
-const FFMPEG_MINLOGLEVEL = process.env.FFMPEG_MINLOGLEVEL || 'warning';
-
 const ev = new eventEmitter();
 
 // Transcoding state
@@ -152,8 +148,9 @@ function startTranscoding() {
      * Configured for low-latency live streaming with fMP4 output
      */
     const ffmpegArgs = [
-        // Logging level (conditional debug output)
-        ...(LOGGINGLEVEL > 2 ? ['-loglevel', 'debug', '-report'] : ['-loglevel', FFMPEG_MINLOGLEVEL]),
+        // Logging level from the configuration; with server log level trace ffmpeg also writes a report file
+        '-loglevel', CONFIG.FFMPEG_LOG_LEVEL || 'warning',
+        ...(utils.logLevel >= 4 ? ['-report'] : []),
 
         // Video input configuration (pipe:0 = stdin)
         '-f', (videoMetadata.videoCodec === 'H264' ? 'h264' : 'hevc'),  // Input format
@@ -291,12 +288,14 @@ function startTranscoding() {
 
     /**
      * FFmpeg Error Output Handler
-     * Logs FFmpeg stderr for debugging
+     * Logs FFmpeg stderr (what ffmpeg prints is limited by FFMPEG_LOG_LEVEL); progress lines only at debug level
      */
     ffmpegProcess.stderr.on('data', (data) => {
-        const line = data.toString();
-        if (line.includes('frame=') || line.includes('speed=')) {
-            utils.log(`ffmpeg: ${line.trim()}`, 'debug');
+        for (const line of data.toString().split(/[\r\n]+/)) {
+            const text = line.trim();
+            if (!text) continue;
+            const isProgress = text.includes('frame=') || text.includes('speed=');
+            utils.log(`ffmpeg: ${text}`, isProgress ? 'debug' : 'info');
         }
     });
 

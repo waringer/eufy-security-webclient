@@ -27,21 +27,12 @@ const localStorageKeyLastDevice = 'eufyWebClientLastDevice';   // Device selecte
 // ============================================================================
 
 /**
- * Debug Log to UI
- * Appends message to debug info panel if debug mode is enabled
- * @param {string} message - Message to log
- */
-function uiDebugLog(message) {
-    if (debugMode) document.getElementById('info').textContent += message + '\n';
-}
-
-/**
  * Initialize UI
  * Sets up all event listeners and initializes UI components
  * Called once on DOMContentLoaded from main.js
  * 
  * Initializes:
- * - Info panel visibility (based on debug mode)
+ * - Debug tab (based on debug mode)
  * - Keyboard shortcuts (arrow keys, numpad)
  * - Browser notification support check
  * - Connect/config/notification button handlers
@@ -51,8 +42,8 @@ function uiDebugLog(message) {
  * - Video start/stop button handler
  */
 function uiInit() {
-    // Configure debug info panel visibility
-    uiInitInfoPanel(debugMode);
+    // Debug tab (client and server log)
+    uiInitDebugPanel();
     uiInitKeyboardShortcuts();
     uiCheckNotificationsSupport();
     themeInit();
@@ -83,7 +74,7 @@ function uiInit() {
 
                 // Hide buttons until properties are loaded
                 document.getElementById('device-update-btn').style.display = "none";
-                document.getElementById('device-video-btn').style.display = "none";
+                document.getElementById('device-video-btn').hidden = true;
                 uiChangePositionPresetError(null);
 
                 // Drop the previous device's picture (it must not be reused as event picture)
@@ -119,24 +110,6 @@ function uiInit() {
             document.getElementById('device-select').dispatchEvent(new Event('change'));
         }
     });
-}
-
-/**
- * Initialize Info Panel
- * Shows or hides debug info panel based on debug mode
- * @param {boolean} isEnabled - True to show panel, false to hide
- */
-function uiInitInfoPanel(isEnabled) {
-    const infoPanel = document.getElementById('info');
-    const infoDetails = infoPanel.closest('details');
-
-    if (!isEnabled) {
-        infoDetails.style.display = 'none';
-        infoPanel.style.display = 'none';
-    } else {
-        infoDetails.style.display = '';
-        infoPanel.style.display = '';
-    }
 }
 
 /**
@@ -270,7 +243,7 @@ function uiReset() {
     document.getElementById('device-picture').replaceChildren();
     document.getElementById('device-select-container').style.display = "none"
     document.getElementById('device-update-btn').style.display = "none"
-    document.getElementById('device-video-btn').style.display = "none"
+    document.getElementById('device-video-btn').hidden = true;
     uiUpdateConnectButtonState();
     uiUpdateDeviceToolBar(false);
     uiChangePositionPresetError(null);
@@ -352,19 +325,20 @@ function uiUpdateConnectButtonState() {
     const connectBtn = document.getElementById('connect-btn');
     const connected = eufyws && eufyws.readyState === WebSocket.OPEN;
 
+    // The button is an icon; the state is shown by its color (class) and tooltip
     if (connected) {
-        connectBtn.textContent = 'Disconnect';
+        connectBtn.title = 'Connected - click to disconnect';
         connectBtn.className = 'disconnect';
     } else {
         if (isAutoReconnecting) {
-            connectBtn.textContent = 'Reconnecting...';
+            connectBtn.title = 'Reconnecting...';
             connectBtn.className = 'reconnect';
         } else {
             if (eufyws && eufyws.readyState === WebSocket.CONNECTING) {
-                connectBtn.textContent = 'Connecting...';
+                connectBtn.title = 'Connecting...';
                 connectBtn.className = 'connecting';
             } else {
-                connectBtn.textContent = 'Connect';
+                connectBtn.title = 'Disconnected - click to connect';
                 connectBtn.className = 'connect';
             }
         }
@@ -453,12 +427,13 @@ function uiMakeDeviceList(devices, names = {}) {
 
 /**
  * Lock Device List
- * Disables device dropdown during video streaming
+ * Disables device dropdown and refresh button during video streaming
+ * (a refresh clears the picture area and rebuilds the toolbar, which would kill the running video)
  * @param {boolean} lock - True to disable, false to enable
  */
 function uiLockDeviceList(lock) {
-    const select = document.getElementById('device-select');
-    select.disabled = lock;
+    document.getElementById('device-select').disabled = lock;
+    document.getElementById('device-update-btn').disabled = lock;
 }
 
 /**
@@ -799,7 +774,7 @@ function uiUpdateDeviceVideo() {
  * @param {boolean} show - True to show button, false to hide
  */
 function uiShowVideoButton(show) {
-    document.getElementById('device-video-btn').style.display = show ? 'block' : 'none';
+    document.getElementById('device-video-btn').hidden = !show;
 }
 
 /**
@@ -812,8 +787,9 @@ function uiShowVideoButton(show) {
 function uiUpdateDeviceToolBar(showPresets, presets) {
     const toolbarContainer = document.getElementById('device-toolbar');
 
-    // Switch between live view / picture and event list comes first
-    toolbarContainer.replaceChildren(uiCreateViewSwitch());
+    // Switch between live view / picture and event list comes first, the video button (static element, keeps its state) next to it
+    const videoBtn = document.getElementById('device-video-btn');
+    toolbarContainer.replaceChildren(uiCreateViewSwitch(), videoBtn);
 
     if (showPresets) {
         // Presets only make sense for the live view, they are hidden in the event list
@@ -946,6 +922,10 @@ function uiOpenConfigModal(config) {
     document.getElementById('config-transcoding-crf').value = config.TRANSCODING_CRF || '';
     document.getElementById('config-ffmpeg-threads').value = config.FFMPEG_THREADS || '';
     document.getElementById('config-short-keyframes').checked = config.FFMPEG_SHORT_KEYFRAMES || false;
+    document.getElementById('config-debug-mode').checked = debugMode;
+    document.getElementById('config-log-level').value = String(config.LOG_LEVEL ?? 2);
+    document.getElementById('config-ffmpeg-log-level').value = config.FFMPEG_LOG_LEVEL || 'warning';
+    document.getElementById('config-sdk-log-level').value = config.SDK_LOG_LEVEL || 'off';
 
     // Display modal
     const modal = document.getElementById('config-modal');
@@ -993,7 +973,7 @@ function uiOpenConfigModal(config) {
     };
 
     // Save configuration handler
-    saveBtn.onclick = () => {
+    saveBtn.onclick = async () => {
         // Build new configuration object from form inputs
         const newConfig = {
             EUFY_CONFIG: {
@@ -1005,11 +985,19 @@ function uiOpenConfigModal(config) {
             TRANSCODING_PRESET: document.getElementById('config-transcoding-preset').value,
             TRANSCODING_CRF: document.getElementById('config-transcoding-crf').value,
             FFMPEG_THREADS: document.getElementById('config-ffmpeg-threads').value,
-            FFMPEG_SHORT_KEYFRAMES: document.getElementById('config-short-keyframes').checked
+            FFMPEG_SHORT_KEYFRAMES: document.getElementById('config-short-keyframes').checked,
+            LOG_LEVEL: parseInt(document.getElementById('config-log-level').value, 10),
+            FFMPEG_LOG_LEVEL: document.getElementById('config-ffmpeg-log-level').value,
+            SDK_LOG_LEVEL: document.getElementById('config-sdk-log-level').value
         };
 
-        // Send updated config to server
-        const err = restPostConfig(newConfig);
+        // Debug display is a setting of this browser, it is not sent to the server
+        setDebugMode(document.getElementById('config-debug-mode').checked);
+
+        // Send updated config to server; the dialog stays open if the server rejects it
+        saveBtn.disabled = true;
+        const err = await restPostConfig(newConfig);
+        saveBtn.disabled = false;
         if (err) {
             alert('Error saving configuration: ' + err);
         } else {

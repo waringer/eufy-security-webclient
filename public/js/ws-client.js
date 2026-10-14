@@ -120,6 +120,7 @@ function wsConnected() {
     isAutoReconnecting = false;
     uiUpdateStatus('Connected', 'orange');
     uiReset();
+    uiDebugOnConnect();   // re-subscribe to the server log if the debug tab is open
 }
 
 /**
@@ -178,11 +179,15 @@ function wsError(err) {
  */
 function wsMessage(event) {
     try {
-        debugConsoleLog('Message received:', event.data);
         const data = JSON.parse(event.data);
+        // Server log lines go to the debug tab only, not additionally to the console
+        if (data.type !== 'log') debugConsoleLog('Message received:', event.data);
 
         // Route message by type to specialized handlers
         switch (data.type) {
+            case 'log':
+                uiDebugServerLog(data.entries, data.reset);  // Server log (debug tab)
+                break;
             case 'version':
                 eufyParseVersionMessage(data);  // Server version info
                 break;
@@ -508,6 +513,17 @@ function eufyStartListening() {
     wsSend(JSON.stringify({
         messageId: 'start_listening',
         command: 'start_listening'
+    }));
+}
+
+/**
+ * Starts or stops receiving the server log (buffered entries first, then live)
+ * @param {boolean} subscribe - True to receive the log, false to stop
+ */
+function eufyLogSubscribe(subscribe) {
+    wsSend(JSON.stringify({
+        messageId: subscribe ? 'log.subscribe' : 'log.unsubscribe',
+        command: subscribe ? 'log.subscribe' : 'log.unsubscribe'
     }));
 }
 
