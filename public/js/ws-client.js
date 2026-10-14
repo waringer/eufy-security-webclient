@@ -668,8 +668,10 @@ function loginShowDialog(login) {
 
     if (status === 'captcha') {
         document.getElementById('login-text').textContent = 'Eufy requires a captcha. Enter the characters shown:';
-        image.src = login.image;
-        image.style.display = '';
+        // The captcha is always a base64 data URL - never load anything else into the image
+        const isDataImage = typeof login.image === 'string' && /^data:image\/(png|jpeg|gif);base64,[A-Za-z0-9+/=]+$/.test(login.image);
+        image.src = isDataImage ? login.image : '';
+        image.style.display = isDataImage ? '' : 'none';
     } else {
         document.getElementById('login-text').textContent = `Eufy sent a verification code${login.method ? ' (' + login.method + ')' : ''}. Enter it:`;
         image.style.display = 'none';
