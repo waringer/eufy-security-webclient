@@ -25,6 +25,8 @@ const MAX_EVENTS_PER_DAY = 300;
 const QUERY_TIMEOUT_MS = 20000;
 const IMAGE_TIMEOUT_MS = 20000;
 const MAX_LOOKBACK_DAYS = 7;
+const REQUEST_DEADLINE_MS = 60000;      // a whole event list request, waiting in the station queue included
+const STALE_SESSION_TIMEOUTS = 2;       // unanswered database queries in a row after which the session is dropped
 
 // detection_type bits of a crop picture row. Person (face / body), vehicle, pet and sound were compared with the app,
 // crying and package are taken from bropat/eufy-security-client (FilterDetectType) and are not verified.
@@ -36,6 +38,9 @@ const PICTURE_DIR = path.join(utils.dataDir, 'event-pictures');
 
 let ctx = null;                       // { getClient(), getInfo(sn), listDeviceSerials() }
 const queues = new Map();             // station serial -> promise chain (one P2P request at a time)
+const queued = new Map();             // station serial -> number of requests queued or running
+const timeoutsInRow = new Map();      // station serial -> unanswered database queries in a row
+const refreshes = new Map();          // device serial -> running refreshLatestEventPicture()
 const eventIndex = new Map();         // recordId -> { stationSn, deviceSn, thumbPath }
 const cropIndex = new Map();          // pictureId -> { stationSn, deviceSn, cropPath }
 const lastRecordByDevice = new Map(); // device serial -> record id of the last picture taken from the station
@@ -50,12 +55,65 @@ function init(context) {
 
 /**
  * Run a task after all earlier P2P requests of the station (replies cannot be told apart)
+ * @param {number} [deadline] - Time stamp (ms) after which the task is dropped instead of run
  */
-function enqueue(stationSn, task) {
+function enqueue(stationSn, task, deadline) {
     const previous = queues.get(stationSn) || Promise.resolve();
-    const next = previous.catch(() => { }).then(task);
+    queued.set(stationSn, (queued.get(stationSn) || 0) + 1);
+    const next = previous.catch(() => { }).then(() => {
+        if (deadline && Date.now() >= deadline) throw timeoutError('station busy, the request expired in its queue');
+        return task();
+    }).finally(() => queued.set(stationSn, queued.get(stationSn) - 1));
     queues.set(stationSn, next);
     return next;
+}
+
+/**
+ * Error of a request the station did not answer in time
+ */
+function timeoutError(message) {
+    const error = new Error(message);
+    error.code = 'ETIMEDOUT';
+    return error;
+}
+
+/**
+ * Reject a promise that is not settled by the deadline
+ */
+function withDeadline(promise, deadline, message) {
+    let timer;
+    const expired = new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(timeoutError(message)), Math.max(0, deadline - Date.now()));
+    });
+    return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Count unanswered database queries of a station. The SDK keeps a session it once connected even when the station
+ * stopped answering (it does not notice a lost link), so after several timeouts in a row the session is closed:
+ * the next request opens a new one.
+ */
+async function watchSession(stationSn, session, request) {
+    try {
+        const result = await request;
+        timeoutsInRow.delete(stationSn);
+        return result;
+    } catch (error) {
+        if (error.code !== 'ETIMEDOUT') {
+            timeoutsInRow.delete(stationSn);   // a refusal is an answer: the station is there
+            throw error;
+        }
+        const count = (timeoutsInRow.get(stationSn) || 0) + 1;
+        utils.log(`⚠️ Station ${stationSn} did not answer a database query (${count} in a row, ${queued.get(stationSn) || 0} requests queued)`, 'warn');
+        if (count >= STALE_SESSION_TIMEOUTS) {
+            timeoutsInRow.delete(stationSn);
+            utils.log(`⚠️ Closing the P2P session of station ${stationSn}, it is opened again on the next request`, 'warn');
+            session.close().catch(e => utils.log(`Closing the P2P session of ${stationSn} failed: ${e.message}`, 'debug'));
+        } else {
+            timeoutsInRow.set(stationSn, count);
+        }
+        throw error;
+    }
 }
 
 /**
@@ -74,17 +132,32 @@ function shiftDate(dateStr, days) {
 }
 
 /**
- * Station of a device and the P2P session to it (opened on demand)
+ * Serial number of the station a device belongs to (the device itself if it has no station)
+ */
+function stationOf(deviceSn) {
+    const info = ctx.getInfo(deviceSn);
+    return (info && info.stationSn) || deviceSn;
+}
+
+/**
+ * Station of a device and the P2P session to it (opened on demand). Called inside the station's queue,
+ * so a session closed by an earlier request is not used.
  * @param {string} deviceSn - Device serial number
+ * @param {number} [deadline] - Time stamp (ms) by which the session must be connected
  * @returns {Promise<{session: P2PSession, accountId: string, stationSn: string}>}
  */
-async function getStationSession(deviceSn) {
+async function getStationSession(deviceSn, deadline) {
     const client = ctx.getClient();
     if (!client) throw new Error('not connected');
-    const info = ctx.getInfo(deviceSn);
-    const stationSn = (info && info.stationSn) || deviceSn;
+    const stationSn = stationOf(deviceSn);
 
-    await client.connectStation(deviceSn);
+    const signal = deadline ? AbortSignal.timeout(Math.max(1, deadline - Date.now())) : undefined;
+    try {
+        await client.connectStation(deviceSn, signal);
+    } catch (error) {
+        if (signal && signal.aborted) throw timeoutError(`no P2P connection to station ${stationSn}`);
+        throw error;
+    }
     const session = client.getP2pSessions().get(stationSn);
     if (!session) throw new Error(`no P2P session for station ${stationSn}`);
 
@@ -140,7 +213,7 @@ function queryDatabase(session, accountId, innerCmd, query, channel = 0) {
             if (doc && doc.cmd === innerCmd) finish(resolve, doc);
             else if (doc && doc.cmd === undefined) finish(reject, new Error(`station refused the database query: ${doc.msg || doc.mIntRet}`));
         };
-        const timer = setTimeout(() => finish(reject, new Error('station did not answer the database query')), QUERY_TIMEOUT_MS);
+        const timer = setTimeout(() => finish(reject, timeoutError('station did not answer the database query')), QUERY_TIMEOUT_MS);
         session.on('dbChunk', onChunk);
         try {
             // channel 0 like the old client; the combined query of the app goes to the station channel
@@ -160,7 +233,7 @@ async function queryDay(session, accountId, stationSn, deviceSn, day) {
 
     // The query of the app's event list: the events together with their detections (one reply, a table each)
     try {
-        const doc = await queryDatabase(session, accountId, CMD_DATABASE_QUERY_COMBINATION_WITH_AI, {
+        const doc = await watchSession(stationSn, session, queryDatabase(session, accountId, CMD_DATABASE_QUERY_COMBINATION_WITH_AI, {
             count: MAX_EVENTS_PER_DAY,
             start_date: day,
             end_date: nextDay,
@@ -172,7 +245,7 @@ async function queryDay(session, accountId, stationSn, deviceSn, day) {
             update_time: '0',
             start_time: `${day}000000`,
             alarm_id: ''
-        }, STATION_CHANNEL);
+        }, STATION_CHANNEL));
         const tables = Array.isArray(doc.data) ? doc.data : [];   // "[]" when the day has no events
         const table = (name) => {
             const found = tables.find(entry => entry.table_name === name);
@@ -180,6 +253,7 @@ async function queryDay(session, accountId, stationSn, deviceSn, day) {
         };
         return { rows: table(EVENT_TABLE), crops: table('record_crop_picture_info'), persons: table('person_basic_info') };
     } catch (error) {
+        if (error.code === 'ETIMEDOUT') throw error;   // no answer at all: the plain list would not come either
         utils.log(`Event detections of ${stationSn} not available (${error.message}), reading the plain event list`, 'debug');
     }
 
@@ -188,7 +262,7 @@ async function queryDay(session, accountId, stationSn, deviceSn, day) {
         const info = ctx.getInfo(sn);
         return info && info.stationSn === stationSn && sn !== stationSn;
     });
-    const doc = await queryDatabase(session, accountId, CMD_DATABASE_QUERY_BY_DATE, {
+    const doc = await watchSession(stationSn, session, queryDatabase(session, accountId, CMD_DATABASE_QUERY_BY_DATE, {
         count: MAX_EVENTS_PER_DAY,
         detection_type: 0,
         device_info: (cameras.length > 0 ? cameras : [deviceSn]).map(sn => ({ device_sn: sn })),
@@ -200,7 +274,7 @@ async function queryDay(session, accountId, stationSn, deviceSn, day) {
         start_time: `${day}000000`,
         storage_cloud: -1,
         ai_type: 0
-    });
+    }));
     return { rows: Array.isArray(doc.data) ? doc.data : [], crops: [], persons: [] };   // "" when the day has no events
 }
 
@@ -242,9 +316,15 @@ async function getEvents(deviceSn, date) {
     const day = date || formatDate(new Date());
     if (!/^\d{8}$/.test(day)) throw new Error('invalid date');
 
-    const { session, accountId, stationSn } = await getStationSession(deviceSn);
+    const deadline = Date.now() + REQUEST_DEADLINE_MS;
+    const stationSn = stationOf(deviceSn);
 
-    const { rows, crops, persons } = await enqueue(stationSn, () => queryDay(session, accountId, stationSn, deviceSn, day));
+    const { rows, crops, persons } = await withDeadline(
+        enqueue(stationSn, async () => {
+            const { session, accountId } = await getStationSession(deviceSn, deadline);
+            return queryDay(session, accountId, stationSn, deviceSn, day);
+        }, deadline),
+        deadline, `station ${stationSn} busy, no event list within ${REQUEST_DEADLINE_MS / 1000}s`);
     if (rows.length >= MAX_EVENTS_PER_DAY) utils.log(`⚠️ Event list of ${day} may be truncated (${rows.length} events)`, 'warn');
 
     const events = rows
@@ -277,22 +357,32 @@ async function getEvents(deviceSn, date) {
  * Download one station image (thumbnail)
  */
 async function fetchImage(deviceSn, stationSn, filePath) {
-    const { session, accountId } = await getStationSession(deviceSn);
-    return enqueue(stationSn, () => new Promise((resolve, reject) => {
+    const deadline = Date.now() + REQUEST_DEADLINE_MS;
+    return enqueue(stationSn, async () => {
+        const { session, accountId } = await getStationSession(deviceSn, deadline);
+        return requestImage(session, accountId, filePath);
+    }, deadline);
+}
+
+/**
+ * Request one image of the station and wait for it
+ */
+function requestImage(session, accountId, filePath) {
+    return new Promise((resolve, reject) => {
         const finish = (fn, value) => {
             clearTimeout(timer);
             session.off('image', onImage);
             fn(value);
         };
         const onImage = (e) => { if (e.file === filePath) finish(resolve, e.data); };
-        const timer = setTimeout(() => finish(reject, new Error('station did not send the image')), IMAGE_TIMEOUT_MS);
+        const timer = setTimeout(() => finish(reject, timeoutError('station did not send the image')), IMAGE_TIMEOUT_MS);
         session.on('image', onImage);
         try {
             session.requestImage(filePath, { accountId });
         } catch (error) {
             finish(reject, error);
         }
-    }));
+    });
 }
 
 /**
@@ -351,11 +441,27 @@ async function getLatestEvent(deviceSn) {
 }
 
 /**
- * Thumbnail of the device's latest event, stored in data/event-pictures/<sn>.jpg (the "event picture")
+ * Thumbnail of the device's latest event, stored in data/event-pictures/<sn>.jpg (the "event picture").
+ * A background lookup: one per device at a time, and none while the station is busy with other requests
+ * (a station that does not answer would otherwise collect lookups in its queue and hold up the event list).
  * @param {string} deviceSn - Device serial number
  * @returns {Promise<{data: Buffer, type: Object}|null>} Picture if it is NEW since the last call, else null
  */
-async function refreshLatestEventPicture(deviceSn) {
+function refreshLatestEventPicture(deviceSn) {
+    const running = refreshes.get(deviceSn);
+    if (running) return running;
+
+    if (queued.get(stationOf(deviceSn)) > 0) return Promise.resolve(null);
+
+    const refresh = lookUpLatestEventPicture(deviceSn).finally(() => refreshes.delete(deviceSn));
+    refreshes.set(deviceSn, refresh);
+    return refresh;
+}
+
+/**
+ * Look up the latest event picture of a device (see refreshLatestEventPicture)
+ */
+async function lookUpLatestEventPicture(deviceSn) {
     const event = await getLatestEvent(deviceSn);
     if (!event) return null;
     if (lastRecordByDevice.get(deviceSn) === event.recordId) return null;

@@ -133,6 +133,7 @@ function wsDisconnected() {
     stationSn = null;
     isAutoReconnecting = !userDisconnectedWs;
     uiReset();
+    if (typeof uiEventsOnDisconnect === 'function') uiEventsOnDisconnect();
 
     // Auto-reconnect after 5 seconds (unless user manually disconnected)
     if (!userDisconnectedWs) {

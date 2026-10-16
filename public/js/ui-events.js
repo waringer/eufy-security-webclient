@@ -8,12 +8,14 @@ let currentView = 'live';       // 'live' | 'events' | 'debug'
 let eventsDeviceSn = null;      // Device the list belongs to
 let eventsDay = null;           // Displayed day (local date, midnight); kept when the device changes
 let eventsRequest = null;       // { deviceSn, date } of the request we wait for
+let eventsRequestTimer = null;  // Gives up on eventsRequest if the server does not answer
 let eventsShown = [];           // Events of the displayed list (for the popup)
 let popupIndex = -1;            // Index in eventsShown of the event in the popup, -1 = closed
 let eventsRefreshTimers = [];   // Pending background reloads after a live event
 let eventsRefreshPending = false;   // A background reload waits for the popup to close
 
 const EVENTS_REFRESH_DELAYS_MS = [10000, 45000, 150000];
+const EVENTS_REQUEST_TIMEOUT_MS = 75000;   // a little longer than the server's own deadline
 
 /**
  * "YYYYMMDD" of a date (local)
@@ -175,8 +177,34 @@ function uiEventsLoad() {
     uiEventsUpdateNav();
     uiEventsMessage('Loading...');
 
-    eventsRequest = { deviceSn: eventsDeviceSn, date: uiEventsFormatDate(eventsDay) };
-    eufyDeviceGetEvents(eventsRequest.deviceSn, eventsRequest.date);
+    uiEventsSendRequest({ deviceSn: eventsDeviceSn, date: uiEventsFormatDate(eventsDay) });
+}
+
+/**
+ * Send a request for an event list; an answer that does not come in time is treated as a failed one
+ * @param {Object} request - { deviceSn, date, background? }
+ */
+function uiEventsSendRequest(request) {
+    clearTimeout(eventsRequestTimer);
+    eventsRequest = request;
+    eventsRequestTimer = setTimeout(() => {
+        if (eventsRequest !== request) return;
+        uiEventsShow({ success: false, errorCode: 'no answer from the server', result: { serialNumber: request.deviceSn, date: request.date } });
+    }, EVENTS_REQUEST_TIMEOUT_MS);
+    eufyDeviceGetEvents(request.deviceSn, request.date);
+}
+
+/**
+ * The connection to the server is gone: its answer to an open request will not come. The list is loaded again
+ * when the device is selected after the reconnect.
+ */
+function uiEventsOnDisconnect() {
+    clearTimeout(eventsRequestTimer);
+    eventsRefreshTimers.forEach(clearTimeout);
+    eventsRefreshTimers = [];
+    eventsRequest = null;
+    eventsRefreshPending = false;
+    eventsDeviceSn = null;
 }
 
 /**
@@ -210,8 +238,7 @@ function uiEventsRefresh() {
     }
 
     eventsRefreshPending = false;
-    eventsRequest = { deviceSn: eventsDeviceSn, date: uiEventsFormatDate(eventsDay), background: true };
-    eufyDeviceGetEvents(eventsRequest.deviceSn, eventsRequest.date);
+    uiEventsSendRequest({ deviceSn: eventsDeviceSn, date: uiEventsFormatDate(eventsDay), background: true });
 }
 
 /**
@@ -241,6 +268,7 @@ function uiEventsShow(message) {
     if (!eventsRequest || result.serialNumber !== eventsRequest.deviceSn || result.date !== eventsRequest.date) return;
     const background = eventsRequest.background;
     eventsRequest = null;
+    clearTimeout(eventsRequestTimer);
 
     // A failed or outdated background refresh keeps the list as it is
     if (background && (!message.success || popupIndex >= 0)) {
