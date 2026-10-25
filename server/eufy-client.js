@@ -32,6 +32,8 @@ let currentStreamingSN = null;              // Serial number of currently stream
 let activeStream = null;                    // Live stream consumer of the current device
 const stations = new Set();                 // Serial numbers of discovered stations
 const devices = new Map();                  // Serial number -> Device (strong refs, the SDK only holds them weakly)
+const p2pPaths = new Map();                 // Station serial -> { path: direct|relay|closed|timeout, detail, since }
+const relayReady = new Set();               // Stations whose relay answered, connect not logged yet
 
 /**
  * Semantic SDK event -> legacy broadcast event name used by the web UI.
@@ -163,7 +165,7 @@ async function connect(eufyConfig) {
             password: eufyConfig.password,
             countryCode: eufyConfig.country,
             store: new sdk.FileSessionStore(path.join(eufyConfig.persistentDir, 'eufy-session.json')),
-            logger: utils.createSdkLogger(),   // filtered by SDK_LOG_LEVEL
+            logger: utils.createSdkLogger(trackP2pPath),   // filtered by SDK_LOG_LEVEL
         });
         registerClientEvents(eufyClient);
 
@@ -184,7 +186,16 @@ function registerClientEvents(client) {
     client.on('pushConnect', () => utils.log('🔌 Eufy push connection established.', 'debug'));
     client.on('pushDisconnect', () => utils.log('⚠️ Eufy push connection closed.', 'warn'));
 
-    client.on('error', (error) => utils.log('❌ Eufy error: ' + (error && error.message ? error.message : error), 'error'));
+    client.on('error', (error) => {
+        const message = error && error.message ? error.message : String(error);
+        utils.log('❌ Eufy error: ' + message, 'error');
+
+        // "P2P connect timeout for <sn> (relay: <step>)": how far the connect got towards a relay
+        const timeout = /^P2P connect timeout for (\S+)(?: \((.+)\))?/.exec(message);
+        if (timeout) setP2pPath(timeout[1], 'timeout', timeout[2] || '');
+    });
+
+    client.on('p2pClose', (stationSn) => setP2pPath(stationSn, 'closed'));
 
     client.on('sessionExpired', (error) => {
         utils.log('❌ Eufy session expired: ' + (error && error.message ? error.message : error), 'error');
@@ -207,6 +218,52 @@ function registerClientEvents(client) {
 
     // Catch-all for all semantic device events
     client.on('event', (e) => handleDeviceEvent(e));
+}
+
+/**
+ * Track over which path a station's P2P session connected (SDK logger tap).
+ * The SDK keeps no public state for it after the connect, only its debug lines say it:
+ * "[p2p] <sn> RLY_RDY from relay <addr>" right before "[p2p] <sn> connected <addr>" on a relayed connect,
+ * "connected" alone on a direct one. If these lines change, the path just stays unknown.
+ * @param {string} severity - SDK log severity
+ * @param {*} message - First logger argument
+ */
+function trackP2pPath(severity, message) {
+    if (typeof message !== 'string' || !message.startsWith('[p2p] ')) return;
+
+    const relay = /^\[p2p\] (\S+) RLY_RDY from relay/.exec(message);
+    if (relay) {
+        relayReady.add(relay[1]);
+        return;
+    }
+    const connected = /^\[p2p\] (\S+) connected \S+/.exec(message);
+    if (connected) {
+        const stationSn = connected[1];
+        setP2pPath(stationSn, relayReady.delete(stationSn) ? 'relay' : 'direct');
+    }
+}
+
+/**
+ * Store and announce the P2P path of a station
+ * @param {string} stationSn - Station serial number
+ * @param {string} path - direct | relay | closed | timeout
+ * @param {string} [detail] - Extra information (relay progress of a timeout)
+ */
+function setP2pPath(stationSn, path, detail = '') {
+    const entry = { path, detail, since: Date.now() };
+    p2pPaths.set(stationSn, entry);
+    if (path === 'direct' || path === 'relay') {
+        utils.log(`🔗 P2P session to ${stationSn} connected (${path})`, 'info');
+    }
+    broadcastSystemEvent('p2p path', { stationSn, ...entry });
+}
+
+/**
+ * P2P path of all stations seen so far
+ * @returns {Array<{stationSn: string, name: string, path: string, detail: string, since: number}>}
+ */
+function getP2pPaths() {
+    return Array.from(p2pPaths, ([stationSn, entry]) => ({ stationSn, name: getDeviceName(stationSn), ...entry }));
 }
 
 /**
@@ -535,7 +592,7 @@ async function startStreamForDevice(serialNumber) {
     const device = devices.get(serialNumber) || await eufyClient.getDevice(serialNumber);
     const camera = device.camera && device.camera();
     if (!camera || !camera.live) {
-        utils.log(`❌ Device ${serialNumber} has no livestream capability.`, 'error');
+        failStreamStart(serialNumber, 'This device has no live stream.');
         return;
     }
 
@@ -544,8 +601,7 @@ async function startStreamForDevice(serialNumber) {
     try {
         stream = await camera.live();
     } catch (error) {
-        currentStreamingSN = null;
-        utils.log(`❌ Failed to start livestream for ${serialNumber}: ${error.message}`, 'error');
+        failStreamStart(serialNumber, describeStreamStartError(error), error);
         return;
     }
     activeStream = stream;
@@ -567,14 +623,30 @@ async function startStreamForDevice(serialNumber) {
         });
     });
 
+    // Audio codecs the pipeline cannot use, logged once per stream
+    const skippedAudioCodecs = new Set();
+
     stream.on('audio', (frame) => {
-        // ffmpeg input is ADTS AAC, G.711 is not supported by the pipeline
-        if (frame.codec !== 'aac-lc' && frame.codec !== 'aac-eld') return;
+        // ffmpeg input is ADTS AAC-LC. AAC-ELD comes as raw access units at 16 kHz, which ffmpeg's
+        // native decoder cannot decode (no ELD-480 tables below 24 kHz); G.711 is not supported either.
+        if (frame.codec !== 'aac-lc') {
+            if (!skippedAudioCodecs.has(frame.codec)) {
+                skippedAudioCodecs.add(frame.codec);
+                utils.log(`🔇 Audio codec ${frame.codec} of ${serialNumber} is not supported, streaming video only`, 'warn');
+            }
+            return;
+        }
         utils.log(`🎵 Audio frame received - Size: ${frame.data.length} bytes`, 'trace');
-        transcode.handleAudioData(frame.data, { audioCodec: 'AAC' });
+        transcode.handleAudioData(frame.data, { audioCodec: 'AAC-LC' });
     });
 
     stream.on('error', (error) => {
+        // The warm-up ended without a first keyframe: the stream will not start, tell the UI why
+        if (error && error.name === 'LiveStreamStartError') {
+            if (activeStream === stream) stopActiveStream();
+            failStreamStart(serialNumber, describeStreamStartError(error), error);
+            return;
+        }
         utils.log(`❌ Livestream error for ${serialNumber}: ${error && error.message ? error.message : error}`, 'error');
     });
 
@@ -596,6 +668,49 @@ async function startStreamForDevice(serialNumber) {
     });
 
     utils.log(`▶️ Livestream started for device: ${serialNumber}`, 'info');
+}
+
+/**
+ * Readable reason of a failed live stream start
+ * @param {Error} error - LiveStreamStartError (reason, stage, timeoutMs, attempts), CameraDisabledError or any error
+ * @returns {string} Message for the web UI
+ */
+function describeStreamStartError(error) {
+    if (error && error.name === 'CameraDisabledError') return 'The camera is switched off.';
+    if (!error || error.name !== 'LiveStreamStartError') return `Live stream could not be started: ${error && error.message ? error.message : error}`;
+
+    const seconds = Math.round((error.timeoutMs || 0) / 1000);
+    const within = seconds ? ` within ${seconds}s` : '';
+    if (error.reason === 'source-error') return 'The connection to the camera failed before the first picture.';
+    if (error.reason === 'source-ended') return 'The camera ended the stream before the first picture.';
+    switch (error.stage) {
+        case 'awaiting-first-frame': return `The camera did not answer${within} - it may be offline, asleep or out of range.`;
+        case 'audio-only': return `The camera sent sound but no picture${within} - it may be switched off.`;
+        case 'awaiting-keyframe': return `The camera sent video but no complete picture${within}.`;
+        default: return `Live stream could not be started (${error.reason}, ${error.stage}).`;
+    }
+}
+
+/**
+ * A live stream did not start: log it, tell the web UI and end the HTTP clients waiting for it
+ * @param {string} serialNumber - Device serial number
+ * @param {string} message - Readable reason
+ * @param {Error} [error] - Original error (its typed fields go to the log and the UI)
+ */
+function failStreamStart(serialNumber, message, error) {
+    const details = error && error.name === 'LiveStreamStartError'
+        ? { reason: error.reason, stage: error.stage, attempts: error.attempts, timeoutMs: error.timeoutMs }
+        : {};
+    utils.log(`❌ Livestream for ${serialNumber} did not start: ${message}` +
+        (error ? ` (${error.name}${details.reason ? ` ${details.reason}/${details.stage}, ${details.attempts} attempts` : `: ${error.message}`})` : ''), 'error');
+
+    if (currentStreamingSN === serialNumber) currentStreamingSN = null;
+    broadcastSystemEvent('livestream start failed', { serialNumber, message, ...details });
+
+    if (transcode.isTranscoding) transcode.stopTranscoding();
+    utils.getActiveStreamClients().forEach(client => {
+        if (client.device === serialNumber && !client.response.writableEnded) client.response.end();
+    });
 }
 
 /**
@@ -687,6 +802,14 @@ function registerWebSocketHandlers() {
             utils.log(`❌ Verify code error: ${error.message}`, 'error');
             return { type: 'result', messageId: 'driver.set_verify_code', success: false, errorCode: error.message };
         }
+    });
+
+    /**
+     * driver.get_p2p_status Command
+     * P2P path (direct / relay) of every station seen so far, for the debug tab
+     */
+    wsApi.registerMessageHandler('driver.get_p2p_status', () => {
+        return { type: 'result', messageId: 'driver.get_p2p_status', success: true, result: { stations: getP2pPaths() } };
     });
 
     /**

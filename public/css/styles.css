@@ -420,8 +420,43 @@ h1 img {
     min-height: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     gap: 1rem;
     padding: 1rem 1.5rem;
+}
+
+/* P2P path of the stations, above both logs */
+.debug-p2p {
+    grid-column: 1 / -1;
+}
+
+#debug-p2p-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+#debug-p2p-table th,
+#debug-p2p-table td {
+    text-align: left;
+    padding: 0.25em 0.75em 0.25em 0;
+    border-bottom: 1px solid var(--border-light);
+}
+
+#debug-p2p-table .p2p-relay {
+    color: orange;
+}
+
+#debug-p2p-table .p2p-direct {
+    color: var(--text-success);
+}
+
+#debug-p2p-table .p2p-timeout {
+    color: var(--text-alert);
+}
+
+#debug-p2p-table .p2p-closed {
+    color: var(--text-tertiary);
 }
 
 .debug-log {

@@ -204,8 +204,10 @@ function startTranscoding() {
         '-thread_queue_size', '512',       // Input thread queue size
 
         // Audio input configuration (pipe:3 = file descriptor 3)
-        '-f', 'aac',                       // AAC audio format
+        '-f', 'aac',                       // AAC audio format (ADTS)
         '-fflags', 'nobuffer',             // Low latency
+        '-probesize', '32',                // Minimal probing: every ADTS header states the format,
+        '-analyzeduration', '0',           // otherwise ffmpeg waits ~3s before it starts the output
         '-i', 'pipe:3',                    // Read from fd 3
         '-thread_queue_size', '512',       // Input thread queue size
 

@@ -58,6 +58,16 @@
                     <div id="events-list"></div>
                 </div>
                 <div id="debug-panel">
+                    <section class="debug-p2p">
+                        <div class="debug-log-header">
+                            <h3>P2P connections</h3>
+                            <button id="debug-p2p-refresh" title="Reload">&#10227;</button>
+                        </div>
+                        <table id="debug-p2p-table">
+                            <thead><tr><th>Station</th><th>Path</th><th>Since</th><th>Detail</th></tr></thead>
+                            <tbody><tr><td colspan="4">No P2P session yet</td></tr></tbody>
+                        </table>
+                    </section>
                     <section class="debug-log">
                         <div class="debug-log-header">
                             <h3>Client</h3>

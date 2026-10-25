@@ -1,5 +1,8 @@
 version: '3.8'
 
+# Host prerequisite: raise net.core.rmem_max to 4194304 on the Docker host for
+# reliable live video (see README, Troubleshooting). Not settable via `sysctls:`.
+
 services:
   transcoding-proxy:
     build: .

@@ -251,10 +251,14 @@ function log(message, severity = 'info') {
  * Create SDK Logger
  * Logger object for the Eufy SDK; its lines are prefixed with [SDK] and filtered by the SDK log level only
  * (checked on every call, so a level change needs no client restart)
+ * @param {Function} [tap] - Called with (severity, message) for every SDK message, before the level filter
  * @returns {Object} Logger with debug/info/warn/error methods
  */
-function createSdkLogger() {
+function createSdkLogger(tap) {
     const write = (severity) => (message, ...args) => {
+        if (tap) {
+            try { tap(severity, message); } catch (e) { /* a tap must never break SDK logging */ }
+        }
         if (sdkLogLevel === 'off' || SDK_LOG_LEVELS.indexOf(severity) > SDK_LOG_LEVELS.indexOf(sdkLogLevel)) return;
         const extra = args.map(arg => typeof arg === 'string' ? arg : util.inspect(arg, { depth: 3, breakLength: Infinity }));
         writeLog(severity, ['[SDK]', message, ...extra].join(' '));

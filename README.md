@@ -310,6 +310,7 @@ All code, comments, and variables are in English. The UI labels and messages are
 - For production deployments, adjust configuration settings for optimal performance and quality
 - ffmpeg is automatically installed in the Docker image
 - Configuration changes made via the web UI are persisted to `data/config.json` and survive restarts
+- **HomeBase S1 Pro (T9000) needs a 64-bit system**: its cameras are reached over WebRTC through the native `node-datachannel` module, which has no build for 32-bit ARM (armv7/armhf) or x86. All other devices work there as before.
 
 ## Troubleshooting
 
@@ -333,6 +334,21 @@ All code, comments, and variables are in English. The UI labels and messages are
 - Lower VIDEO_SCALE resolution if needed
 - Use Intel GPU hardware acceleration (`HWACCEL=vaapi`, see Configuration) on weak CPUs
 - Use the Config UI to fine-tune transcoding parameters in real-time
+
+### "UDP receive buffer below … requested" warning
+The Eufy SDK asks for a 4 MiB UDP receive buffer for the P2P video connection. The Linux kernel caps this at `net.core.rmem_max` (default ~208 KiB, logged as `granted 425984`). With the smaller buffer, bursts of video data (keyframes) can be dropped, which shows up as artefacts or freezes in live video.
+
+`net.core.rmem_max` is a host-wide setting: it cannot be changed from inside the container, and `sysctls:` in `docker-compose.yml` does not work for this key. Raise it on the Docker host instead:
+
+```bash
+echo 'net.core.rmem_max=4194304' | sudo tee /etc/sysctl.d/99-eufy-udp.conf
+sudo sysctl --system
+docker compose restart
+```
+
+Check with `sysctl net.core.rmem_max`; after the restart the warning no longer appears in the log.
+
+On Home Assistant OS (add-on) the host sysctls are not user-configurable. There the warning can be ignored as long as live video plays without artefacts.
 
 ### Event list issues
 - "Events not available" means the station did not answer; the list needs a P2P connection to the HomeBase

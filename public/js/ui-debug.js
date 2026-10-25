@@ -24,6 +24,68 @@ function uiInitDebugPanel() {
     document.getElementById('debug-server-download').addEventListener('click', uiDebugDownloadServerLog);
 
     document.getElementById('debug-server-filter').addEventListener('change', uiDebugApplyServerFilter);
+
+    document.getElementById('debug-p2p-refresh').addEventListener('click', eufyGetP2pStatus);
+}
+
+// Station serial -> { stationSn, name, path, detail, since } as last reported by the server
+const debugP2pPaths = new Map();
+
+/**
+ * Show the P2P path of all stations (answer of driver.get_p2p_status)
+ * @param {Object[]} stations - [{ stationSn, name, path, detail, since }]
+ */
+function uiDebugShowP2pPaths(stations) {
+    debugP2pPaths.clear();
+    (stations || []).forEach(entry => debugP2pPaths.set(entry.stationSn, entry));
+    uiDebugRenderP2pPaths();
+}
+
+/**
+ * One station's P2P path changed ('p2p path' event)
+ * @param {Object} entry - { stationSn, path, detail, since }
+ */
+function uiDebugUpdateP2pPath(entry) {
+    const known = debugP2pPaths.get(entry.stationSn);
+    debugP2pPaths.set(entry.stationSn, { name: known ? known.name : '', ...entry });
+    uiDebugLog(`P2P ${entry.stationSn}: ${entry.path}${entry.detail ? ` (${entry.detail})` : ''}`);
+    uiDebugRenderP2pPaths();
+}
+
+/**
+ * Render the P2P table of the debug tab
+ */
+function uiDebugRenderP2pPaths() {
+    const body = document.querySelector('#debug-p2p-table tbody');
+    if (debugP2pPaths.size === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 4;
+        cell.textContent = 'No P2P session yet';
+        row.append(cell);
+        body.replaceChildren(row);
+        return;
+    }
+
+    const rows = Array.from(debugP2pPaths.values())
+        .sort((a, b) => a.stationSn.localeCompare(b.stationSn))
+        .map(entry => {
+            const row = document.createElement('tr');
+            const cells = [
+                entry.name ? `${entry.name} (${entry.stationSn})` : entry.stationSn,
+                entry.path,
+                entry.since ? uiDebugTime(new Date(entry.since)) : '',
+                entry.detail || ''
+            ].map(text => {
+                const cell = document.createElement('td');
+                cell.textContent = text;
+                return cell;
+            });
+            cells[1].className = `p2p-${entry.path}`;
+            row.append(...cells);
+            return row;
+        });
+    body.replaceChildren(...rows);
 }
 
 /**
@@ -63,13 +125,17 @@ function uiUpdateDebugAvailability() {
  */
 function uiDebugOnViewChange(shown) {
     eufyLogSubscribe(shown);
+    if (shown) eufyGetP2pStatus();
 }
 
 /**
  * WebSocket (re)connected: subscribe again if the debug tab is open
  */
 function uiDebugOnConnect() {
-    if (currentView === 'debug') eufyLogSubscribe(true);
+    if (currentView === 'debug') {
+        eufyLogSubscribe(true);
+        eufyGetP2pStatus();
+    }
 }
 
 /**

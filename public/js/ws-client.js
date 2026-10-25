@@ -299,6 +299,10 @@ function eufyParseResultMessage(message) {
             uiEventsShow(message);
             break;
 
+        case 'driver.get_p2p_status':  // P2P path of all stations (debug tab)
+            if (message.success && message.result) uiDebugShowP2pPaths(message.result.stations);
+            break;
+
         case 'device.get_commands':  // Available device commands  // Available device commands
             if (message.result && message.result.serialNumber === uiGetDeviceSn()) {
                 if (Array.isArray(message.result.commands)) {
@@ -452,6 +456,16 @@ function eufyParseEventMessage(message) {
             uiUpdateStatus('Eufy login error: ' + (message.event.message || ''), 'red');
             break;
 
+        case 'livestream start failed':  // Live stream did not start (reason from the SDK)
+            uiDebugLog(`Livestream start failed for ${message.event.serialNumber}: ${message.event.message}` +
+                (message.event.reason ? ` (${message.event.reason}, ${message.event.stage}, ${message.event.attempts} attempts)` : ''));
+            if (message.event.serialNumber === uiGetDeviceSn()) videoOnStartFailed(message.event.message);
+            break;
+
+        case 'p2p path':  // A station's P2P session connected (direct / relay), closed or timed out
+            uiDebugUpdateP2pPath(message.event);
+            break;
+
         case 'stream_stopped_by_station':  // Livestream stopped by station
             // Handle livestream stopped by station (e.g., resolution change)
             if (message.event.serialNumber === uiGetDeviceSn()) {
@@ -525,6 +539,16 @@ function eufyLogSubscribe(subscribe) {
     wsSend(JSON.stringify({
         messageId: subscribe ? 'log.subscribe' : 'log.unsubscribe',
         command: subscribe ? 'log.subscribe' : 'log.unsubscribe'
+    }));
+}
+
+/**
+ * Request the P2P path (direct / relay) of all stations (debug tab)
+ */
+function eufyGetP2pStatus() {
+    wsSend(JSON.stringify({
+        messageId: 'driver.get_p2p_status',
+        command: 'driver.get_p2p_status'
     }));
 }
 

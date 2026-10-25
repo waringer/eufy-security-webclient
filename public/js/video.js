@@ -56,6 +56,18 @@ function videoShowError(message) {
 }
 
 /**
+ * Live Stream Start Failed
+ * The server could not start the live stream (camera offline, switched off, no keyframe ...):
+ * stop instead of reconnecting and show the reason
+ * @param {string} message - Readable reason from the server
+ */
+function videoOnStartFailed(message) {
+    if (isStreaming || reconnectTimeout) videoStopStream();   // also drops a reconnect the stream end has scheduled
+    videoSetStatus('Start failed', 'disconnected');
+    videoShowError(message || 'Live stream could not be started');
+}
+
+/**
  * Hide Video Error
  * Removes error message overlay from video player
  */
