@@ -188,6 +188,7 @@ function uiCheckNotificationsSupport() {
     // Check if browser supports notifications API
     if (!("Notification" in window)) {
         notificationBtn.style.display = 'none';
+        return;
     }
 
     // Hide button based on current permission status
@@ -258,7 +259,7 @@ function uiReset() {
  * @param {string} body - Notification body text
  */
 function uiSendNotification(title, body) {
-    if (Notification.permission === "granted") {
+    if ("Notification" in window && Notification.permission === "granted") {
         new Notification(title, {
             body: body,
             requireInteraction: false,
