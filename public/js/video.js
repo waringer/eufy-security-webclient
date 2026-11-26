@@ -138,7 +138,16 @@ function videoStartStream(server, deviceSerial) {
     videoUpdateButtons(true);
 
     // Initialize Media Source Extensions (MSE)
-    mediaSource = new MediaSource();
+    if (!window.MediaSource && window.ManagedMediaSource) {
+        // WebKit won't open a managed source without an AirPlay alternative or this opt-out.
+        video.disableRemotePlayback = true;
+        // Safari needs inline, muted video to autoplay once the stream has buffered.
+        video.playsInline = true;
+        video.muted = true;
+        mediaSource = new window.ManagedMediaSource();
+    } else {
+        mediaSource = new MediaSource();
+    }
     video.src = URL.createObjectURL(mediaSource);
 
     mediaSource.addEventListener('sourceopen', async () => {
