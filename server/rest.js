@@ -10,6 +10,7 @@
  */
 
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const path = require('path');
 
 const utils = require('./utils');
@@ -112,7 +113,20 @@ function initRestServer() {
      * The first request waits for the download; Range requests (seeking) are answered from the cached file.
      * Only record ids of event lists this server delivered are known.
      */
-    app.get('/event-video/:recordId', async (req, res) => {
+    // Each uncached recording costs a station download of up to minutes: limit requests per client.
+    // Generous enough for seeking, which sends a Range request per jump. Only settable by environment,
+    // not by the (unauthenticated) config API.
+    const recordingLimit = parseRateLimit(process.env.RECORDING_RATE_LIMIT, 120);
+    utils.log(`🎞️ Recording requests per minute and client: ${recordingLimit || 'unlimited'}`, 'info');
+    const recordingLimiter = recordingLimit === 0 ? (req, res, next) => next() : rateLimit({
+        windowMs: 60 * 1000,
+        limit: recordingLimit,
+        standardHeaders: 'draft-8',
+        legacyHeaders: false,
+        message: 'Too many recording requests, try again in a minute'
+    });
+
+    app.get('/event-video/:recordId', recordingLimiter, async (req, res) => {
         const recordId = req.params.recordId;
         if (!/^\d{1,20}$/.test(recordId)) {
             return res.status(400).send('Invalid record id');
@@ -476,6 +490,20 @@ function initRestServer() {
 
     // Initialize WebSocket API on /api path for real-time communication
     wsApi.initWebSocketServer(server, PORT, getServerStatus);
+}
+
+/**
+ * Requests per minute from an environment value; 0 turns the limit off
+ * @param {string|undefined} value - Environment value
+ * @param {number} fallback - Used when the value is missing or not a whole number >= 0
+ * @returns {number}
+ */
+function parseRateLimit(value, fallback) {
+    if (value === undefined || value === '') return fallback;
+    const limit = Number(value);
+    if (Number.isInteger(limit) && limit >= 0) return limit;
+    utils.log(`⚠️ Invalid rate limit "${value}", using ${fallback}`, 'warn');
+    return fallback;
 }
 
 /**

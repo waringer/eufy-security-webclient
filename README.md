@@ -157,6 +157,7 @@ Configuration is managed through `data/config.json`. Create this file before fir
 | FFMPEG_MINLOGLEVEL      | warning                | Initial ffmpeg log level; `FFMPEG_LOG_LEVEL` in the configuration takes precedence |
 | STATIC_DIR              | ./public               | Path to static files |
 | DATA_DIR                | ./data                 | Path for persistent configuration storage |
+| RECORDING_RATE_LIMIT    | 120                    | Requests per minute and client to `/event-video` (`0` = no limit). Behind a reverse proxy all clients share one limit |
 
 You can set these in your `docker-compose.yml`, Docker run command, or as environment variables locally.
 
@@ -252,7 +253,7 @@ The browser's native notification system is used.
 - **GET /:serialNumber.mp4**: Video transcoding stream endpoint (e.g., `/T8410P11234567890.mp4`)
 - **GET /event-thumb/:recordId**: JPEG thumbnail of an event (only for events of a list the server delivered)
 - **GET /event-crop/:pictureId**: JPEG detection picture of an event (only for events of a list the server delivered)
-- **GET /event-video/:recordId**: MP4 recording of an event, with Range support for seeking; `?download=<name>` sends it as file `<name>.mp4` (only for events of a list the server delivered)
+- **GET /event-video/:recordId**: MP4 recording of an event, with Range support for seeking; `?download=<name>` sends it as file `<name>.mp4` (only for events of a list the server delivered; at most 120 requests per minute and client, see `RECORDING_RATE_LIMIT`)
 - **GET /logs**: The last 1000 server log entries as text file
 - **GET /quit**: Gracefully shut down the server
 - **Static files**: All files in `/public` are served at the root path

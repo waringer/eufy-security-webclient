@@ -19,6 +19,7 @@ services:
       FFMPEG_MINLOGLEVEL: warning        # ffmpeg log level
       FFMPEG_SHORT_KEYFRAMES: 'true'     # Use short keyframes (true/false)
       TRANSCODING_PRESET: ultrafast      # ffmpeg preset
+      # RECORDING_RATE_LIMIT: 120        # Recording requests per minute and client (0 = no limit)
       # OPTIONAL: Intel GPU hardware acceleration (also enable the devices section below)
       # HWACCEL: vaapi                   # none | vaapi
       # LIBVA_DRIVER_NAME: i965          # only for older GPUs (e.g. Braswell, Haswell)
