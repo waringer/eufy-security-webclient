@@ -149,6 +149,7 @@ async function connect(eufyConfig) {
         // Event history and event thumbnails come from the station (not part of the SDK API)
         events.init({
             getClient: () => eufyClient,
+            getDevice: (sn) => devices.get(sn) || (eufyClient ? eufyClient.getDevice(sn) : null),
             getInfo: (sn) => deviceInfo.get(sn),
             listDeviceSerials: () => Array.from(deviceInfo.keys())
         });
@@ -1148,5 +1149,6 @@ module.exports = {
     stopStreamForDevice,
     getEventThumbnail: (recordId) => events.getThumbnail(recordId),
     getEventCropPicture: (pictureId) => events.getCropPicture(pictureId),
+    getEventRecording: (recordId) => events.getRecording(recordId),
     close
 };

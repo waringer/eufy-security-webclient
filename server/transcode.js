@@ -651,9 +651,57 @@ function getLatestSnapshot() {
  * Module Exports
  * Exposes transcoding functions, getters, and event emitter
  */
+/**
+ * Mux Recording
+ * Turns the elementary streams of a downloaded station recording into a browser playable MP4 file.
+ * H.264 video is copied; H.265 is transcoded to H.264, because browsers play HEVC in MP4 only partly
+ * (and the SDK reports decode errors with the hvc1 tag). ADTS AAC audio is copied.
+ * @param {Object} opts
+ * @param {string} opts.videoFile - Annex-B video file
+ * @param {string} [opts.codec] - 'h264' | 'h265' (default h264)
+ * @param {string} [opts.audioFile] - ADTS AAC file, omitted when the recording has no audio
+ * @param {number} [opts.fps] - Frame rate from the camera's stamps
+ * @param {string} opts.outFile - MP4 file to write
+ * @returns {Promise<void>} Resolves when ffmpeg exited with 0
+ */
+function muxRecording({ videoFile, codec, audioFile, fps, outFile }) {
+    const hevc = codec === 'h265';
+    const rate = fps > 0 && fps <= 120 ? String(Math.round(fps * 100) / 100) : '15';
+    const args = [
+        '-loglevel', 'error',
+        '-y',
+        '-r', rate,                        // the rate must come before -i, ffmpeg ignores -framerate here
+        '-f', hevc ? 'hevc' : 'h264',
+        '-i', videoFile,
+        ...(audioFile ? ['-f', 'aac', '-i', audioFile] : []),
+        '-map', '0:v',
+        ...(audioFile ? ['-map', '1:a?'] : []),
+        ...(hevc
+            ? ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-threads', String(CONFIG.FFMPEG_THREADS || 0)]
+            : ['-c:v', 'copy']),
+        ...(audioFile ? ['-c:a', 'copy', '-bsf:a', 'aac_adtstoasc'] : []),
+        '-movflags', '+faststart',
+        '-f', 'mp4',
+        outFile
+    ];
+
+    return new Promise((resolve, reject) => {
+        const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        let stderr = '';
+        proc.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-2000); });
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+            if (code === 0) return resolve();
+            utils.log(`❌ ffmpeg could not mux the recording (exit ${code}): ${stderr.trim()}`, 'error');
+            reject(new Error(`ffmpeg exited with ${code}`));
+        });
+    });
+}
+
 module.exports = {
     // Core functions
     initTranscode,
+    muxRecording,
     startTranscoding,
     stopTranscoding,
     handleVideoData,

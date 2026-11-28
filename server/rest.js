@@ -104,6 +104,42 @@ function initRestServer() {
         }
     });
 
+    /**
+     * Event Recording Endpoint
+     * Route: GET /event-video/:recordId
+     *
+     * MP4 of an event recording stored on the station (HomeBase 2 / 3, downloaded over P2P, cached on disk).
+     * The first request waits for the download; Range requests (seeking) are answered from the cached file.
+     * Only record ids of event lists this server delivered are known.
+     */
+    app.get('/event-video/:recordId', async (req, res) => {
+        const recordId = req.params.recordId;
+        if (!/^\d{1,20}$/.test(recordId)) {
+            return res.status(400).send('Invalid record id');
+        }
+
+        try {
+            const file = await eufy.getEventRecording(recordId);
+            if (!file) return res.status(404).send('No recording for this event');
+
+            res.set('Cache-Control', 'public, max-age=86400, immutable');   // a record id never changes its recording
+            res.type('video/mp4');
+            // ?download=<name>: save as file instead of playing (name reduced to safe characters)
+            if (req.query.download !== undefined) {
+                const name = String(req.query.download).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || `event-${recordId}`;
+                res.attachment(`${name}.mp4`);
+            }
+            res.sendFile(file, { dotfiles: 'allow' }, (error) => {
+                if (error && !res.headersSent) res.status(500).send('Recording not readable');
+            });
+        } catch (error) {
+            const reason = error && error.reason;
+            utils.log(`❌ Event recording ${recordId}: ${error.message}${reason ? ` (${reason})` : ''}`, 'warn');
+            const notThere = reason === 'no-data' || reason === 'invalid-recording';
+            res.status(notThere ? 404 : 502).send(reason || 'Recording not available');
+        }
+    });
+
     app.get('/:serialNumber.mp4', (req, res) => {
         const requestedDevice = req.params.serialNumber;
 
@@ -275,7 +311,7 @@ function initRestServer() {
      * Restarts affected services automatically
      */
     app.post('/config', (req, res) => {
-        const newConfig = req.body;
+        const newConfig = req.body || {};   // Express 5: undefined without a JSON body
         // Never write the password into the log (the log is visible in the web UI)
         const loggedConfig = newConfig.EUFY_CONFIG && 'password' in newConfig.EUFY_CONFIG
             ? { ...newConfig, EUFY_CONFIG: { ...newConfig.EUFY_CONFIG, password: '***' } }
@@ -385,8 +421,11 @@ function initRestServer() {
         const text = utils.getLogBuffer()
             .map(entry => `${entry.time} [${entry.level.toUpperCase()}] ${entry.message}`)
             .join('\n');
+        // Log lines can carry request data (e.g. serial numbers from URLs): plain text, never sniffed as HTML
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Content-Disposition', 'attachment; filename="eufy-server.log"');
-        res.type('text/plain').send(text + '\n');
+        res.send(text + '\n');
     });
 
     /**

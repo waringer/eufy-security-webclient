@@ -7,6 +7,7 @@
  *     station's AI (person / vehicle / pet, recognised persons); payload as the SDK sends for its table reads
  *   - CMD_DATABASE_QUERY_BY_DATE (10006): events of ONE day without detections, if the station refuses 10011
  *   - CMD_DATABASE_IMAGE via session.requestImage(): thumbnail JPEG of an event, detection pictures
+ * Event recordings come from the SDK (camera().downloadRecording(), HomeBase 2 / 3) and are muxed to MP4.
  * The commands are the ones the Eufy app uses; the payloads of 10006 and the image request follow
  * bropat/eufy-security-client (src/http/station.ts).
  *
@@ -16,6 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const utils = require('./utils');
+const transcode = require('./transcode');
 
 const CMD_DATABASE_QUERY_BY_DATE = 10006;
 const CMD_DATABASE_QUERY_COMBINATION_WITH_AI = 10011;
@@ -27,6 +29,8 @@ const IMAGE_TIMEOUT_MS = 20000;
 const MAX_LOOKBACK_DAYS = 7;
 const REQUEST_DEADLINE_MS = 60000;      // a whole event list request, waiting in the station queue included
 const STALE_SESSION_TIMEOUTS = 2;       // unanswered database queries in a row after which the session is dropped
+const RECORDING_DEADLINE_MS = 180000;   // a whole recording download, waiting in the station queue included
+const MAX_CACHED_RECORDINGS = 50;       // MP4 files kept in the recording cache (oldest are deleted)
 
 // detection_type bits of a crop picture row. Person (face / body), vehicle, pet and sound were compared with the app,
 // crying and package are taken from bropat/eufy-security-client (FilterDetectType) and are not verified.
@@ -35,19 +39,21 @@ const DETECTION_BITS = [[1, 'person'], [2, 'person'], [4, 'vehicle'], [8, 'pet']
 const THUMB_DIR = path.join(utils.dataDir, 'event-thumbs');
 const CROP_DIR = path.join(utils.dataDir, 'event-crops');
 const PICTURE_DIR = path.join(utils.dataDir, 'event-pictures');
+const RECORDING_DIR = path.join(utils.dataDir, 'event-recordings');
 
-let ctx = null;                       // { getClient(), getInfo(sn), listDeviceSerials() }
+let ctx = null;                       // { getClient(), getDevice(sn), getInfo(sn), listDeviceSerials() }
 const queues = new Map();             // station serial -> promise chain (one P2P request at a time)
 const queued = new Map();             // station serial -> number of requests queued or running
 const timeoutsInRow = new Map();      // station serial -> unanswered database queries in a row
 const refreshes = new Map();          // device serial -> running refreshLatestEventPicture()
-const eventIndex = new Map();         // recordId -> { stationSn, deviceSn, thumbPath }
+const eventIndex = new Map();         // recordId -> { stationSn, deviceSn, thumbPath, storagePath, cipherId }
 const cropIndex = new Map();          // pictureId -> { stationSn, deviceSn, cropPath }
 const lastRecordByDevice = new Map(); // device serial -> record id of the last picture taken from the station
+const downloads = new Map();          // recordId -> running recording download
 
 /**
  * Initialize with accessors of the Eufy client module
- * @param {Object} context - { getClient, getInfo, listDeviceSerials }
+ * @param {Object} context - { getClient, getDevice, getInfo, listDeviceSerials }
  */
 function init(context) {
     ctx = context;
@@ -327,10 +333,18 @@ async function getEvents(deviceSn, date) {
         deadline, `station ${stationSn} busy, no event list within ${REQUEST_DEADLINE_MS / 1000}s`);
     if (rows.length >= MAX_EVENTS_PER_DAY) utils.log(`⚠️ Event list of ${day} may be truncated (${rows.length} events)`, 'warn');
 
+    const canDownload = !!(await recordingCamera(deviceSn));
+
     const events = rows
         .filter(row => row.device_sn === deviceSn && String(row.start_time).slice(0, 10).replace(/-/g, '') === day)
         .map(row => {
-            eventIndex.set(String(row.record_id), { stationSn, deviceSn: row.device_sn, thumbPath: row.thumb_path });
+            eventIndex.set(String(row.record_id), {
+                stationSn,
+                deviceSn: row.device_sn,
+                thumbPath: row.thumb_path,
+                storagePath: row.storage_path,
+                cipherId: Number(row.cipher_id) || 0
+            });
             const eventCrops = crops.filter(crop => crop.record_id === row.record_id);
             eventCrops.forEach(crop => cropIndex.set(String(crop.picture_id), { stationSn, deviceSn: row.device_sn, cropPath: crop.crop_path }));
             return {
@@ -343,6 +357,7 @@ async function getEvents(deviceSn, date) {
                 ...describeDetections(eventCrops, persons),
                 size: row.folder_size,
                 hasThumbnail: !!row.thumb_path,
+                hasRecording: canDownload && isRecordingSupported(row.storage_path),
                 cipherId: row.cipher_id,
                 storagePath: row.storage_path
             };
@@ -480,4 +495,111 @@ async function lookUpLatestEventPicture(deviceSn) {
     return { data, type: { ext: 'jpg', mime: 'image/jpeg' }, event };
 }
 
-module.exports = { init, getEvents, getThumbnail, getCropPicture, refreshLatestEventPicture };
+/**
+ * Camera of a device if the SDK offers the recording download for it (HomeBase 2 / 3 only)
+ * @param {string} deviceSn - Device serial number
+ * @returns {Promise<Object|null>} Bound camera capability or null
+ */
+async function recordingCamera(deviceSn) {
+    try {
+        const device = await ctx.getDevice(deviceSn);
+        const camera = device && device.camera && device.camera();
+        return camera && typeof camera.downloadRecording === 'function' ? camera : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+/**
+ * Whether the SDK can fetch the recording at this station path.
+ * Workaround: the SDK always requests /zx/emmcdata/..., so recordings a HomeBase 3 keeps on its hard disk
+ * (/zx/hdd_dataN/...) end in no-data. Remove once mega-yfue/eufy-sdk#710 is fixed.
+ * @param {string} storagePath - storage_path of the event row
+ */
+function isRecordingSupported(storagePath) {
+    return !!storagePath && !/\/hdd_data\d*\//.test(storagePath);
+}
+
+/**
+ * Recording of an event as MP4 file, cached on disk. Only event ids from a list this server delivered
+ * (or already cached) are served: the station path never comes from the client.
+ * @param {string} recordId - Record id
+ * @returns {Promise<string|null>} Path of the MP4 file or null if the event is unknown / has no recording.
+ *          Rejects with the SDK's RecordingDownloadError (reason) when the station delivers no recording.
+ */
+function getRecording(recordId) {
+    const id = String(recordId);
+    const file = path.join(RECORDING_DIR, `${id}.mp4`);
+    if (fs.existsSync(file)) return Promise.resolve(file);
+
+    const entry = eventIndex.get(id);
+    if (!entry || !isRecordingSupported(entry.storagePath)) return Promise.resolve(null);
+
+    const running = downloads.get(id);
+    if (running) return running;
+
+    const download = downloadRecording(id, entry, file).finally(() => downloads.delete(id));
+    downloads.set(id, download);
+    return download;
+}
+
+/**
+ * Download one recording from the station (in the station's queue) and mux it to MP4
+ */
+async function downloadRecording(id, entry, file) {
+    const camera = await recordingCamera(entry.deviceSn);
+    if (!camera) return null;
+
+    // Recording name: file name without folder and extension; a HomeBase 2 cipher id above 24 bits resolves via its low byte
+    const recording = path.posix.parse(entry.storagePath).name;
+    const cipherId = entry.cipherId > 0xffffff ? entry.cipherId & 0xff : entry.cipherId;
+    const deadline = Date.now() + RECORDING_DEADLINE_MS;
+
+    utils.log(`🎞️ Downloading recording ${recording} of ${entry.deviceSn}`, 'debug');
+    const started = Date.now();
+    const clip = await withDeadline(
+        enqueue(entry.stationSn, () => camera.downloadRecording({
+            recording,
+            cipherId,
+            signal: AbortSignal.timeout(Math.max(1, deadline - Date.now()))
+        }), deadline),
+        deadline, `station ${entry.stationSn} busy, no recording within ${RECORDING_DEADLINE_MS / 1000}s`);
+    utils.log(`🎞️ Recording ${recording} of ${entry.deviceSn}: ${clip.codec || 'unknown codec'}, ${clip.frames} frames ` +
+        `(${clip.missingFrames} missing), ${Math.round(clip.durationMs / 1000)}s @ ${Math.round(clip.fps)}fps, ` +
+        `${clip.audio ? 'with' : 'no'} audio, downloaded in ${Math.round((Date.now() - started) / 1000)}s`, 'info');
+
+    fs.mkdirSync(RECORDING_DIR, { recursive: true });
+    const videoFile = path.join(RECORDING_DIR, `${id}.video.tmp`);
+    const audioFile = clip.audio && clip.audio.length > 0 ? path.join(RECORDING_DIR, `${id}.audio.tmp`) : undefined;
+    const tmpFile = path.join(RECORDING_DIR, `${id}.tmp.mp4`);
+    try {
+        fs.writeFileSync(videoFile, clip.video);
+        if (audioFile) fs.writeFileSync(audioFile, clip.audio);
+        await transcode.muxRecording({ videoFile, codec: clip.codec, audioFile, fps: clip.fps, outFile: tmpFile });
+        fs.renameSync(tmpFile, file);   // never serve a half written file
+    } finally {
+        for (const tmp of [videoFile, audioFile, tmpFile]) {
+            if (tmp) fs.rmSync(tmp, { force: true });
+        }
+    }
+
+    pruneRecordings();
+    return file;
+}
+
+/**
+ * Keep the recording cache at MAX_CACHED_RECORDINGS files (oldest first out)
+ */
+function pruneRecordings() {
+    try {
+        const files = fs.readdirSync(RECORDING_DIR)
+            .filter(name => /^\d+\.mp4$/.test(name))
+            .map(name => ({ file: path.join(RECORDING_DIR, name), mtime: fs.statSync(path.join(RECORDING_DIR, name)).mtimeMs }))
+            .sort((a, b) => b.mtime - a.mtime);
+        files.slice(MAX_CACHED_RECORDINGS).forEach(({ file }) => fs.rmSync(file, { force: true }));
+    } catch (error) {
+        utils.log(`Cleaning the recording cache failed: ${error.message}`, 'debug');
+    }
+}
+
+module.exports = { init, getEvents, getThumbnail, getCropPicture, getRecording, refreshLatestEventPicture };

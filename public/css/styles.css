@@ -949,12 +949,166 @@ span.false {
     gap: 0.75rem;
 }
 
-#event-popup-image {
+#event-popup-stage {
+    position: relative;
     flex: 1 1 auto;
     min-width: 0;
+    display: flex;
+    justify-content: center;
+}
+
+#event-popup-image,
+#event-popup-video {
+    display: block;
     max-width: 100%;
     max-height: 75vh;
     object-fit: contain;
+}
+
+#event-popup-image[hidden],
+#event-popup-video[hidden] {
+    display: none;
+}
+
+#event-popup-video {
+    background: #000;
+}
+
+/* An image with a recording behind it can be clicked to play it */
+#event-popup-stage.has-recording #event-popup-image {
+    cursor: pointer;
+}
+
+/* Play button over the image (selector beats the prev/next button rule of #event-popup-view) */
+#event-popup-view #event-popup-play {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 4.5rem;
+    height: 4.5rem;
+    padding: 0;
+    transform: translate(-50%, -50%);
+    border: 2px solid rgba(255, 255, 255, 0.85);
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.15s;
+}
+
+#event-popup-view #event-popup-play[hidden] {
+    display: none;
+}
+
+#event-popup-view #event-popup-play:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.75);
+    transform: translate(-50%, -50%) scale(1.06);
+}
+
+#event-popup-view #event-popup-play:disabled {
+    opacity: 1;
+    cursor: progress;
+}
+
+/* Triangle, shifted a little right so it looks centred */
+#event-popup-play::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-35%, -50%);
+    border-style: solid;
+    border-width: 0.85rem 0 0.85rem 1.4rem;
+    border-color: transparent transparent transparent currentColor;
+}
+
+/* While the station sends the recording: spinner instead of the triangle */
+#event-popup-play.loading::before {
+    display: none;
+}
+
+#event-popup-play.loading::after {
+    content: "";
+    position: absolute;
+    inset: 0.9rem;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: event-popup-spin 0.9s linear infinite;
+}
+
+@keyframes event-popup-spin {
+    to { transform: rotate(360deg); }
+}
+
+#event-popup-recording-status {
+    position: absolute;
+    left: 50%;
+    bottom: 0.75rem;
+    transform: translateX(-50%);
+    max-width: calc(100% - 1.5rem);
+    padding: 0.3rem 0.7rem;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+#event-popup-recording-status[hidden] {
+    display: none;
+}
+
+#event-popup-recording-status.error {
+    color: #ff8a80;
+}
+
+/* Header: download icon next to the close cross */
+.event-popup-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.event-popup-icon {
+    display: flex;
+    align-items: center;
+    padding: 0.2rem;
+    border: none;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.event-popup-icon:hover:not(:disabled) {
+    background: none;
+    color: var(--button-text-hover);
+}
+
+.event-popup-icon:disabled {
+    opacity: 0.4;
+    cursor: progress;
+}
+
+.event-popup-icon[hidden] {
+    display: none;
+}
+
+/* Events with a recording on the station: small play mark in front of the duration */
+.event-duration.has-recording {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+}
+
+.event-duration.has-recording::before {
+    content: "";
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0.32em 0 0.32em 0.55em;
+    border-color: transparent transparent transparent var(--accent-color);
 }
 
 #event-popup-crops {
@@ -973,7 +1127,8 @@ span.false {
 }
 
 /* Leave room for the detection pictures below the image */
-#event-popup-view:has(+ #event-popup-crops:not(:empty)) #event-popup-image {
+#event-popup-view:has(+ #event-popup-crops:not(:empty)) #event-popup-image,
+#event-popup-view:has(+ #event-popup-crops:not(:empty)) #event-popup-video {
     max-height: 52vh;
 }
 

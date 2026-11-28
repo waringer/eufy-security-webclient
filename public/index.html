@@ -226,12 +226,22 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="event-popup-title"></h2>
-                <span class="modal-close" id="event-popup-close">&times;</span>
+                <div class="event-popup-actions">
+                    <button id="event-popup-download" class="event-popup-icon" title="Download recording" aria-label="Download recording" hidden>
+                        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+                    </button>
+                    <span class="modal-close" id="event-popup-close">&times;</span>
+                </div>
             </div>
             <div class="modal-body">
                 <div id="event-popup-view">
                     <button id="event-popup-prev" title="Previous event (arrow left)">&#8249;</button>
-                    <img id="event-popup-image" alt="">
+                    <div id="event-popup-stage">
+                        <img id="event-popup-image" alt="">
+                        <video id="event-popup-video" controls playsinline preload="auto" hidden></video>
+                        <button id="event-popup-play" title="Play recording" aria-label="Play recording" hidden></button>
+                        <div id="event-popup-recording-status" hidden></div>
+                    </div>
                     <button id="event-popup-next" title="Next event (arrow right)">&#8250;</button>
                 </div>
                 <div id="event-popup-crops"></div>

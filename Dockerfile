@@ -1,5 +1,5 @@
 # Dockerfile for eufy-security-webclient (H.265 Transcoding Proxy)
-FROM node:25-alpine
+FROM node:24-alpine
 
 # Install ffmpeg and other dependencies
 RUN apk add --no-cache \

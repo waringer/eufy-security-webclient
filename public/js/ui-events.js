@@ -320,6 +320,10 @@ function uiEventsShow(message) {
         const duration = document.createElement('div');
         duration.className = 'event-duration';
         duration.textContent = uiEventsFormatDuration(event.durationSec || 0);
+        if (event.hasRecording) {
+            duration.classList.add('has-recording');
+            duration.title = 'Recording available';
+        }
 
         meta.append(time, duration);
 
@@ -358,6 +362,7 @@ function uiEventsOpenPopup(index) {
     image.classList.toggle('no-thumb', !event.hasThumbnail);
     image.src = event.hasThumbnail ? uiEventsThumbUrl(event) : '';
     uiEventsShowCrops(event);
+    uiEventsResetRecording(event);
 
     document.getElementById('event-popup-prev').disabled = index <= 0;
     document.getElementById('event-popup-next').disabled = index >= eventsShown.length - 1;
@@ -376,8 +381,117 @@ function uiEventsClosePopup() {
     document.getElementById('event-popup').classList.remove('show');
     document.getElementById('event-popup-image').src = '';
     document.getElementById('event-popup-crops').replaceChildren();
+    uiEventsResetRecording(null);
     inConfig = false;
     if (eventsRefreshPending) uiEventsRefresh();
+}
+
+/**
+ * URL of an event's recording (MP4, downloaded from the station on the first request)
+ */
+function uiEventsVideoUrl(event) {
+    const base = typeof transcodeServerUrl === 'string' ? transcodeServerUrl : '';
+    return `${base}/event-video/${encodeURIComponent(event.recordId)}`;
+}
+
+/**
+ * Stop a playing recording and show the image again; offers the recording of the event if it has one
+ * @param {Object|null} event - Event shown in the popup, null when the popup closes
+ */
+function uiEventsResetRecording(event) {
+    const video = document.getElementById('event-popup-video');
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.hidden = true;
+    document.getElementById('event-popup-image').hidden = false;
+
+    const hasRecording = !!(event && event.hasRecording);
+    uiEventsRecordingStatus('');
+    uiEventsRecordingBusy(false);
+    document.getElementById('event-popup-stage').classList.toggle('has-recording', hasRecording);
+    document.getElementById('event-popup-play').hidden = !hasRecording;
+    document.getElementById('event-popup-download').hidden = !hasRecording;
+}
+
+/**
+ * Status line over the bottom of the image / video; hidden while empty
+ */
+function uiEventsRecordingStatus(text, isError = false) {
+    const status = document.getElementById('event-popup-recording-status');
+    status.textContent = text;
+    status.classList.toggle('error', isError);
+    status.hidden = !text;
+}
+
+/**
+ * Lock / unlock the recording buttons while a recording is fetched
+ */
+function uiEventsRecordingBusy(busy) {
+    const play = document.getElementById('event-popup-play');
+    play.disabled = busy;
+    play.classList.toggle('loading', busy);
+    document.getElementById('event-popup-download').disabled = busy;
+}
+
+/**
+ * Make sure the server holds the recording of an event. The first request waits until the station sent it,
+ * so the state is shown while loading. A one-byte request: the file itself is fetched by the player / download.
+ * @param {Object} event - Event of the popup
+ * @returns {Promise<boolean>} True if the recording is available and the popup still shows the event
+ */
+async function uiEventsPrepareRecording(event) {
+    uiEventsRecordingBusy(true);
+    uiEventsRecordingStatus('Loading recording from the station…');
+    try {
+        const response = await fetch(uiEventsVideoUrl(event), { headers: { Range: 'bytes=0-0' } });
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        if (response.body) response.body.cancel().catch(() => { });
+    } catch (error) {
+        if (eventsShown[popupIndex] !== event) return false;   // popup moved on
+        uiEventsRecordingStatus(`Recording not available: ${error.message}`, true);
+        uiEventsRecordingBusy(false);
+        return false;
+    }
+    if (eventsShown[popupIndex] !== event) return false;
+    uiEventsRecordingStatus('');
+    uiEventsRecordingBusy(false);
+    return true;
+}
+
+/**
+ * Play the recording of the event in the popup in place of the image
+ */
+async function uiEventsPlayRecording() {
+    const event = eventsShown[popupIndex];
+    if (!event || !event.hasRecording) return;
+    if (document.getElementById('event-popup-play').disabled) return;   // already loading
+    if (!await uiEventsPrepareRecording(event)) return;
+
+    document.getElementById('event-popup-play').hidden = true;
+    const video = document.getElementById('event-popup-video');
+    video.src = uiEventsVideoUrl(event);
+    video.hidden = false;
+    document.getElementById('event-popup-image').hidden = true;
+    video.play().catch(() => { /* autoplay refused: the controls stay */ });
+}
+
+/**
+ * Save the recording of the event in the popup as MP4 file (works without playing it).
+ * The server sends it as attachment, so the page stays where it is - also when the stream server is
+ * another origin, where the download attribute of a link would be ignored.
+ */
+async function uiEventsDownloadRecording() {
+    const event = eventsShown[popupIndex];
+    if (!event || !event.hasRecording || !await uiEventsPrepareRecording(event)) return;
+
+    const name = `${event.deviceSn}_${String(event.start || event.recordId).replace(/[^0-9]/g, '')}`;
+    const link = document.createElement('a');
+    link.href = `${uiEventsVideoUrl(event)}?download=${encodeURIComponent(name)}`;
+    link.download = `${name}.mp4`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
 }
 
 /**
@@ -411,8 +525,16 @@ document.addEventListener('DOMContentLoaded', () => {
     popup.addEventListener('click', (e) => { if (e.target === popup) uiEventsClosePopup(); });
     document.getElementById('event-popup-prev').addEventListener('click', () => uiEventsStepPopup(-1));
     document.getElementById('event-popup-next').addEventListener('click', () => uiEventsStepPopup(1));
+    document.getElementById('event-popup-play').addEventListener('click', uiEventsPlayRecording);
+    document.getElementById('event-popup-image').addEventListener('click', uiEventsPlayRecording);
+    document.getElementById('event-popup-download').addEventListener('click', uiEventsDownloadRecording);
+    document.getElementById('event-popup-video').addEventListener('error', (e) => {
+        if (!e.target.getAttribute('src')) return;   // reset, not a playback error
+        uiEventsRecordingStatus('The recording cannot be played in this browser.', true);
+    });
     document.addEventListener('keydown', (e) => {
         if (popupIndex < 0) return;
+        if (e.target && e.target.tagName === 'VIDEO' && e.key !== 'Escape') return;   // arrows seek the video
         if (e.key === 'Escape') uiEventsClosePopup();
         else if (e.key === 'ArrowLeft') uiEventsStepPopup(-1);
         else if (e.key === 'ArrowRight') uiEventsStepPopup(1);

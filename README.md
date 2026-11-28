@@ -13,6 +13,7 @@ A web-based client and video transcoding server using [eufy-sdk](https://github.
 - **Keyboard shortcuts** for PTZ control and camera presets
 - **Event history** of each camera, read from the HomeBase: one day at a time with thumbnail, time and duration
 - **Detection details per event**: what the station's AI recognised (person, vehicle, pet, sound) including the names of recognised persons and the detection pictures
+- **Event recordings**: play the recording of an event in the browser or download it as MP4 (HomeBase 2 / 3)
 - **Live update of the event list** when a new event of the shown camera arrives
 - **Real-time notifications** for motion, person, pet, vehicle and sound detection events
 - **Smart picture update detection** with hash-based change tracking
@@ -46,7 +47,7 @@ eufy-security-webclient/
 ├── server/                # Server-side modules
 │   ├── eufy-client.js    # Eufy Security Client integration
 │   ├── eufy-sdk.js       # Loader for the ESM-only eufy-sdk
-│   ├── events.js         # Event history, thumbnails and detection pictures of a station
+│   ├── events.js         # Event history, thumbnails, detection pictures and recordings of a station
 │   ├── property-meta.js  # Device properties and their description for the web UI
 │   ├── transcode.js      # FFmpeg transcoding and snapshot extraction
 │   ├── ws-api.js         # WebSocket API server
@@ -220,11 +221,14 @@ The "Events" view shows the events of the selected camera that are stored on its
 - **One day at a time**: step a day or a week back and forth, jump to today or reload the list
 - **Each event** shows its thumbnail, start time, duration and what was detected, e.g. `Person, Pet` or `Person (Alex)` for a recognised person
 - **Click an event** to open its image in a popup; the detection pictures (the parts of the image the AI recognised something in) are shown below it. The arrow keys or the buttons step through the events of the day, Escape closes the popup
+- **Recording**: events with a recording on the station are marked with ▶ in the list. In the popup, the play button on the image (or a click on the image) plays it, the download icon next to the close cross saves it as MP4. The first request takes a few seconds, because the station sends the recording at about twice real time and the server then packs it into an MP4
 - **Live update**: while the list of today is shown, it reloads in the background when a new event of that camera arrives (several times, because the station completes an event only after its recording has ended)
 
-The event history and the pictures are read from the station over P2P and cached in `data/event-thumbs` and `data/event-crops`.
+The event history and the pictures are read from the station over P2P and cached in `data/event-thumbs` and `data/event-crops`. Recordings are cached in `data/event-recordings` (the last 50; H.265 recordings are converted to H.264 so every browser can play them).
 
 **Note**: The detection details need a station that answers the combined event query of the Eufy app (verified with a HomeBase 3). Other stations show the event list without them. Person, vehicle, pet and sound were checked against the Eufy app; crying and package detections are mapped but not verified.
+
+**Note**: Recordings are available for cameras behind a HomeBase 2 or HomeBase 3, and only for finished events. Recordings a HomeBase 3 keeps on its hard disk are not offered yet, because eufy-sdk cannot fetch them ([eufy-sdk#710](https://github.com/mega-yfue/eufy-sdk/issues/710)).
 
 ### Notifications
 The web client displays real-time notifications for:
@@ -248,6 +252,7 @@ The browser's native notification system is used.
 - **GET /:serialNumber.mp4**: Video transcoding stream endpoint (e.g., `/T8410P11234567890.mp4`)
 - **GET /event-thumb/:recordId**: JPEG thumbnail of an event (only for events of a list the server delivered)
 - **GET /event-crop/:pictureId**: JPEG detection picture of an event (only for events of a list the server delivered)
+- **GET /event-video/:recordId**: MP4 recording of an event, with Range support for seeking; `?download=<name>` sends it as file `<name>.mp4` (only for events of a list the server delivered)
 - **GET /logs**: The last 1000 server log entries as text file
 - **GET /quit**: Gracefully shut down the server
 - **Static files**: All files in `/public` are served at the root path
